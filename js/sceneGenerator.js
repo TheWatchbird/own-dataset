@@ -428,10 +428,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
         sceneSetup.virtualObject
     );
     
-    console.log('Direct 2D projections:', {
-        view1: view1Pos ? { x: Math.round(view1Pos.x), y: Math.round(view1Pos.y) } : null,
-        view2: view2Pos ? { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) } : null
-    });
+    // Project 3D points to 2D coordinates
     
     // Get the correct width of the second viewer's viewport
     const view2Width = viewer2.canvas.clientWidth;
@@ -444,12 +441,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
         y: view2Pos.y
     } : null;
     
-    console.log('Adjusted coords for overlay:', {
-        original: view2Pos ? { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) } : null,
-        adjusted: adjustedView2Pos ? { x: Math.round(adjustedView2Pos.x), y: Math.round(adjustedView2Pos.y) } : null,
-        viewer1Width: viewer1.canvas.clientWidth,
-        viewer2Width: view2Width
-    });
+    // Adjust view2 coordinates for overlay visualization
     
     // Create the matching point data structure using the direct projections
     const matchingPoint = {
@@ -485,11 +477,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
                pos.y >= margin && pos.y <= height - margin;
     }
     
-    if (!isValid) {
-        console.warn("⚠️ Object projection validation issue");
-    } else {
-        console.log("✅ Object successfully projected to both views");
-    }
+    // Validation complete
 
     // Calculate camera altitudes relative to ground for display
     const cart1 = Cesium.Cartographic.fromCartesian(viewer1.camera.position);

@@ -79,8 +79,7 @@ function createViewers() {
  */
 async function generateNewViews() {
     try {
-        console.clear();
-        console.log("=== GENERATING NEW DRONE VIEWS WITH VIRTUAL OBJECT ===");
+        // Generate new views
         
         // Clear previous matching points
         matchingPoints = [];
@@ -91,7 +90,7 @@ async function generateNewViews() {
         // Generate a random location
         currentLocation = generateRandomLocation();
         
-        console.log("Selected location:", currentLocation);
+        // Location selected
         
         // Create fresh viewers
         createViewers();
@@ -103,14 +102,14 @@ async function generateNewViews() {
         matchingPoints = result.matchingPoints;
         
         // Log the results
-        console.log(`Virtual object projected to both views:`, matchingPoints);
+        // Virtual object projected to both views
         
         // Update stats and visualization
         updateStats(result.stats);
         
         // Draw matching lines with a slight delay to ensure canvas is ready
         setTimeout(() => {
-            console.log('Drawing virtual object projections:', matchingPoints);
+            // Draw the virtual object projections
             drawMatchingLines(matchingPoints);
         }, 100);
         
@@ -195,38 +194,19 @@ function updateStats(stats) {
         distanceEl.textContent = typeof stats.distance === 'number' ? stats.distance : '?';
     }
     
-    // Update debug panel with detailed information
+    // Update debug panel with compact information
     const debugPanel = document.getElementById('debug-panel');
     if (debugPanel) {
-        const validPoints = stats.debug.validPoints;
-        const totalPoints = stats.debug.totalPoints;
         const finalView1Pos = stats.debug.finalView1Pos ? 
             `(${stats.debug.finalView1Pos.x}, ${stats.debug.finalView1Pos.y})` : 'Unknown';
         const finalView2Pos = stats.debug.finalView2Pos ? 
             `(${stats.debug.finalView2Pos.x}, ${stats.debug.finalView2Pos.y})` : 'Unknown';
-        const forcedMatch = stats.debug.isForcedMatch ? 'Yes' : 'No';
-        const inView1 = stats.debug.inView1 ? 'Yes' : 'No';
-        const inView2 = stats.debug.inView2 ? 'Yes' : 'No';
         
         debugPanel.innerHTML = `
-            <h4>Virtual Object:</h4>
-            <div>Location: ${stats.objectCoords ? `${stats.objectCoords.lat}, ${stats.objectCoords.lon}` : 'Unknown'}</div>
-            <div>Height: ${stats.objectCoords ? `${stats.objectCoords.height}m` : 'Unknown'}</div>
-            <div>Visible in View 1: ${inView1}</div>
-            <div>Visible in View 2: ${inView2}</div>
+            <div>Object: ${stats.objectCoords ? `${stats.objectCoords.lat.toFixed(6)}, ${stats.objectCoords.lon.toFixed(6)}` : 'Unknown'} (${stats.objectCoords ? `${stats.objectCoords.height}m` : 'Unknown'})</div>
             <div>View 1 Position: ${finalView1Pos}</div>
             <div>View 2 Position: ${finalView2Pos}</div>
-            <div>Edge Match: ${forcedMatch}</div>
-            
-            <h4>Camera Setup:</h4>
-            <div>Drone 1 Height: ${stats.altitude1}m</div>
-            <div>Drone 2 Height: ${stats.altitude2}m</div>
-            <div>Distance: ${stats.distance}m</div>
             <div>Angle Difference: ${stats.headingDiff || '?'}°</div>
-            <div>Pitch Difference: ${stats.pitchDiff || '?'}°</div>
-            
-            <h4>Performance:</h4>
-            <div>Processing Time: ${stats.debug.duration}ms</div>
         `;
     }
 }

@@ -45,18 +45,7 @@ function initCanvas() {
     // Initial resize
     resizeCanvas();
     
-    // Draw initial test rectangle
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.5)';
-    ctx.fillRect(0, 0, 100, 100);
-    
-    console.log('Canvas initialized successfully');
     isInitialized = true;
-    
-    // Remove the debug message if it exists
-    const debugMsg = document.getElementById('debug-message');
-    if (debugMsg) {
-        debugMsg.remove();
-    }
     
     return { canvas, ctx };
 }
@@ -80,20 +69,9 @@ function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     
-    console.log('Canvas resized:', {
-        windowDimensions: {
-            width: window.innerWidth,
-            height: window.innerHeight
-        },
-        canvasDimensions: {
-            width: canvas.width,
-            height: canvas.height
-        }
-    });
+    // Set canvas to window dimensions
     
-    // Draw test rectangle after resize
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.5)';
-    ctx.fillRect(0, 0, 100, 100);
+    // Canvas is now resized
 }
 
 /**
@@ -101,10 +79,7 @@ function resizeCanvas() {
  * @param {Array} matchingPoints - Array of matching points
  */
 function drawMatchingLines(matchingPoints) {
-    console.log('Drawing virtual object projections...');
-    
     if (!isInitialized) {
-        console.log('Canvas not initialized, initializing now...');
         const result = initCanvas();
         if (!result) {
             console.error('Failed to initialize canvas');
@@ -127,8 +102,6 @@ function drawMatchingLines(matchingPoints) {
     ctx.lineTo(viewWidth, viewHeight);
     ctx.stroke();
     
-    console.log('Drawing object projections:', matchingPoints);
-    
     if (!matchingPoints || matchingPoints.length === 0) {
         // Show a warning if no points to draw
         ctx.font = 'bold 24px Arial';
@@ -141,7 +114,6 @@ function drawMatchingLines(matchingPoints) {
     // Draw point markers without connecting lines
     matchingPoints.forEach((match, index) => {
         if (!match.view1Pos || !match.view2Pos) {
-            console.log('Skipping invalid point:', match);
             return;
         }
         
@@ -150,7 +122,7 @@ function drawMatchingLines(matchingPoints) {
         const x2 = Number(match.view2Pos.x);
         const y2 = Number(match.view2Pos.y);
         
-        console.log(`Drawing virtual object projection ${index}:`, { x1, y1, x2, y2 });
+        // Draw the point markers
         
         // Draw the virtual object marker in each view
         const pointColor1 = 'red';
@@ -185,40 +157,18 @@ function drawArrow(ctx, x1, y1, x2, y2) {
  * @param {Boolean} isForcedMatch - Whether this is a forced match (outside optimal margins)
  */
 function drawVirtualObjectMarker(ctx, x, y, color, index, isForcedMatch = false) {
-    const size = 20;  // Smaller size for less intrusion
+    const size = 20;  // Marker size
     
     // Save current context state
     ctx.save();
     
     // Color variations based on view and position
-    let rgbColor;
-    let strokeColor;
+    let rgbColor = color === 'red' ? '255,50,50' : '50,255,50';
+    let strokeColor = 'white';
     
     if (isForcedMatch) {
-        // Matches near edges use yellow warning indicator
-        rgbColor = color === 'red' ? '255,180,50' : '200,255,50';
         strokeColor = 'yellow';
-    } else {
-        // Regular matches in optimal position use standard red/green
-        rgbColor = color === 'red' ? '255,50,50' : '50,255,50';
-        strokeColor = 'white';
     }
-    
-    // Draw crosshair (simpler)
-    ctx.beginPath();
-    ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = 1;
-    if (isForcedMatch) {
-        ctx.setLineDash([3, 3]);
-    }
-    
-    // Horizontal and vertical crosshair lines
-    ctx.moveTo(x - size, y);
-    ctx.lineTo(x + size, y);
-    ctx.moveTo(x, y - size);
-    ctx.lineTo(x, y + size);
-    ctx.stroke();
-    ctx.setLineDash([]);
     
     // Draw outer circle with translucent fill
     ctx.beginPath();
@@ -238,7 +188,7 @@ function drawVirtualObjectMarker(ctx, x, y, color, index, isForcedMatch = false)
     ctx.lineWidth = 1;
     ctx.stroke();
     
-    // Draw minimal view label
+    // Draw view label
     ctx.font = '12px Arial';
     ctx.fillStyle = 'white';
     ctx.textAlign = 'center';

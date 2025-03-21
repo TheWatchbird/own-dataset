@@ -22,32 +22,21 @@
         <div id="view2-label" class="view-label">Drone View 2</div>
     </div>
     
-    <!-- Debug message to verify canvas position -->
-    <div id="debug-message" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; z-index: 100000;">
-        Initializing visualization...
-    </div>
+    <!-- No debug message needed -->
     
     <!-- Visualization container -->
     <div class="visualization-container">
         <canvas id="overlay-canvas"></canvas>
     </div>
     
-    <div class="info-panel">
-        <h3>Drone View Point Matching</h3>
-        <p>Ukrainian drone footage from two different perspectives</p>
-        <p>Numbered points show the same physical locations viewed from different angles</p>
-        <p><span style="color: red;">Red</span> = View 1 | <span style="color: green;">Green</span> = View 2</p>
-    </div>
+    <!-- Removed info panel -->
     
     <div class="stats" id="stats-panel">
-        <div>Location: <span id="location-name">Loading...</span></div>
-        <div>Drone Altitudes: <span id="drone-altitude">0</span>m</div>
-        <div>Distance: <span id="camera-distance">0</span>m</div>
+        <div>Location: <span id="location-name">Loading...</span> | Altitudes: <span id="drone-altitude">0</span>m | Distance: <span id="camera-distance">0</span>m</div>
     </div>
     
     <button id="debug-toggle">Debug</button>
     <div id="debug-panel" class="debug-panel">
-        <h4>Debug Info:</h4>
         <div>Loading...</div>
     </div>
 
