@@ -35,12 +35,22 @@ function exportDataset(
             const camera1 = viewer1.camera;
             const camera2 = viewer2.camera;
             
+            // Get viewport dimensions for percentage calculations
+            const view1Width = viewer1.canvas.clientWidth;
+            const view1Height = viewer1.canvas.clientHeight;
+            const view2Width = viewer2.canvas.clientWidth;
+            const view2Height = viewer2.canvas.clientHeight;
+            
             // Create dataset with all necessary information
             const dataset = {
                 metadata: {
                     timestamp: new Date().toISOString(),
                     location: locationName,
                     pointCount: matchingPoints.length,
+                    viewportDimensions: {
+                        view1: { width: view1Width, height: view1Height },
+                        view2: { width: view2Width, height: view2Height }
+                    },
                     cameras: {
                         camera1: {
                             position: {
@@ -72,14 +82,15 @@ function exportDataset(
                         z: point.point3D.z
                     },
                     view1: {
-                        x: point.view1Pos.x,
-                        y: point.view1Pos.y
+                        // Convert to relative coordinates (0-1)
+                        x: point.view1Pos.x / view1Width,
+                        y: point.view1Pos.y / view1Height
                     },
                     view2: {
+                        // Convert to relative coordinates (0-1)
                         // Get the original viewer2 coordinates (not the adjusted ones used for overlay)
-                        // We need the raw coordinates relative to the second viewer
-                        x: point.view2Pos.x - viewer1.canvas.clientWidth,
-                        y: point.view2Pos.y
+                        x: (point.view2Pos.x - viewer1.canvas.clientWidth) / view2Width,
+                        y: point.view2Pos.y / view2Height
                     }
                 }))
             };
