@@ -80,7 +80,7 @@ async function generateNewViews() {
         showLoading('Generating drone views with virtual object...');
         
         // Generate a random location
-        currentLocation = generateRandomLocation();
+        currentLocation = await generateRandomLocation();
         
         // Location selected
         

@@ -23,21 +23,95 @@ import {
  */
 
 /**
- * Generate a random point within Ukraine's bounds
- * @returns {Object} - Location with lat, lon, and ground height
+ * Find the nearest building to given coordinates
+ * @param {number} lat - Latitude
+ * @param {number} lon - Longitude
+ * @returns {Promise<Object>} - Location with lat and lon
  */
-function generateRandomLocation() {
-    const lat = UKRAINE_BOUNDS.minLat + Math.random() * (UKRAINE_BOUNDS.maxLat - UKRAINE_BOUNDS.minLat);
-    const lon = UKRAINE_BOUNDS.minLon + Math.random() * (UKRAINE_BOUNDS.maxLon - UKRAINE_BOUNDS.minLon);
-    const height = 0; // Ground level
-    
-    // Use actual GPS coordinates instead of "Random Location" text
-    return {
-        name: `${lat.toFixed(6)},${lon.toFixed(6)}`,
-        lat,
-        lon,
-        height
-    };
+async function findNearestBuilding(lat, lon) {
+    let radius = 1000; // Start with 1000m radius
+    const maxRadius = 30000; // Limit expansion to 30km
+
+    while (radius <= maxRadius) {
+        const overpassQuery = `
+            [out:json][timeout:10];
+            (
+                way(around:${radius}, ${lat}, ${lon})["building"];
+            );
+            out center;
+        `;
+        const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+
+        try {
+            const response = await fetch(overpassUrl);
+            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+            
+            const data = await response.json();
+
+            if (data.elements.length > 0) {
+                const nearestBuilding = data.elements[0];
+                return {
+                    lat: nearestBuilding.center?.lat || lat,
+                    lon: nearestBuilding.center?.lon || lon
+                };
+            }
+        } catch (error) {
+            console.error(`Overpass API error (Radius ${radius}m):`, error);
+        }
+
+        // Increase search radius for next attempt
+        radius += 1000; // Increase by 1km per attempt
+    }
+
+    throw new Error("No buildings found after expanding search.");
+}
+
+/**
+ * Generate a random point within Ukraine's bounds
+ * @returns {Promise<Object>} - Location with lat, lon, and ground height
+ */
+async function generateRandomLocation() {
+    while (true) {
+        const lat = UKRAINE_BOUNDS.minLat + Math.random() * (UKRAINE_BOUNDS.maxLat - UKRAINE_BOUNDS.minLat);
+        const lon = UKRAINE_BOUNDS.minLon + Math.random() * (UKRAINE_BOUNDS.maxLon - UKRAINE_BOUNDS.minLon);
+
+        try {
+            const buildingLocation = await findNearestBuilding(lat, lon);
+            
+            // 50% chance to apply random shift
+            if (Math.random() < 0.5) {
+                // Add random shift within 200m
+                // Convert 200m to approximate degrees (1 degree ≈ 111km at equator)
+                const maxShiftDegrees = 200 / 111000; // 200m in degrees
+                
+                // Generate random angle for shift direction
+                const shiftAngle = Math.random() * Math.PI * 2;
+                // Generate random distance within 200m
+                const shiftDistance = Math.random() * maxShiftDegrees;
+                
+                // Calculate shifted coordinates
+                const shiftedLat = buildingLocation.lat + shiftDistance * Math.sin(shiftAngle);
+                const shiftedLon = buildingLocation.lon + shiftDistance * Math.cos(shiftAngle) / Math.cos(buildingLocation.lat * Math.PI / 180);
+                
+                return {
+                    name: `${shiftedLat.toFixed(6)},${shiftedLon.toFixed(6)}`,
+                    lat: shiftedLat,
+                    lon: shiftedLon,
+                    height: 0
+                };
+            } else {
+                // Return exact building location without shift
+                return {
+                    name: `${buildingLocation.lat.toFixed(6)},${buildingLocation.lon.toFixed(6)}`,
+                    lat: buildingLocation.lat,
+                    lon: buildingLocation.lon,
+                    height: 0
+                };
+            }
+        } catch (error) {
+            console.warn("Retrying with a new random point...");
+        }
+    }
 }
 
 /**
@@ -461,7 +535,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
     console.log("Setting up scene with virtual object approach...");
     
     if (!location) {
-        location = generateRandomLocation();
+        location = await generateRandomLocation();
     }
     
     // Generate camera positions with a virtual object to track
