@@ -58,7 +58,9 @@ function exportDataset(viewer1, viewer2, matchingPoints, locationName) {
                         y: point.view1Pos.y
                     },
                     view2: {
-                        x: point.view2Pos.x - viewer1.canvas.width, // Normalize to viewer2 coordinates
+                        // Get the original viewer2 coordinates (not the adjusted ones used for overlay)
+                        // We need the raw coordinates relative to the second viewer
+                        x: point.view2Pos.x - viewer1.canvas.clientWidth,
                         y: point.view2Pos.y
                     }
                 }))

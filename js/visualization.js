@@ -169,39 +169,10 @@ function drawMatchingLines(matchingPoints) {
     });
 }
 
-/**
- * Draw an arrow between two points to indicate correspondence
- * @param {CanvasRenderingContext2D} ctx - Canvas context
- * @param {Number} x1 - Start X coordinate
- * @param {Number} y1 - Start Y coordinate 
- * @param {Number} x2 - End X coordinate
- * @param {Number} y2 - End Y coordinate
- */
+// This function is no longer used - we don't draw connecting arrows
+// But keeping a stub in case we need to restore it
 function drawArrow(ctx, x1, y1, x2, y2) {
-    // Calculate midpoint of the line
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2;
-    
-    // Calculate arrow angle and length
-    const angle = Math.atan2(y2 - y1, x2 - x1);
-    const arrowLength = 12;
-    const arrowWidth = 8;
-    
-    // Draw arrow at midpoint
-    ctx.save();
-    ctx.translate(midX, midY);
-    ctx.rotate(angle);
-    
-    // Draw arrowhead
-    ctx.beginPath();
-    ctx.fillStyle = 'white';
-    ctx.moveTo(0, 0);
-    ctx.lineTo(-arrowLength, -arrowWidth / 2);
-    ctx.lineTo(-arrowLength, arrowWidth / 2);
-    ctx.closePath();
-    ctx.fill();
-    
-    ctx.restore();
+    // This function is intentionally disabled
 }
 
 /**

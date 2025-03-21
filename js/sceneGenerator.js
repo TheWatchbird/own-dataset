@@ -412,11 +412,78 @@ async function setupCameraViews(viewer1, viewer2, location) {
     viewer1.scene.render();
     viewer2.scene.render();
     
-    // Get the projected coordinates
-    const result = await findMatchingPoints(viewer1, viewer2, sceneSetup.virtualObject);
-    const matchingPoints = result.matchingPoints;
-    const isValid = result.isValid;
-    const debugInfo = result.debugInfo;
+    // Get precise 2D coordinates of our 3D virtual object in both views
+    // This is the critical step to get accurate projection coordinates
+    viewer1.scene.render();
+    viewer2.scene.render();
+    
+    // Project the 3D position to 2D screen coordinates in both views
+    const view1Pos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(
+        viewer1.scene, 
+        sceneSetup.virtualObject
+    );
+    
+    const view2Pos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(
+        viewer2.scene, 
+        sceneSetup.virtualObject
+    );
+    
+    console.log('Direct 2D projections:', {
+        view1: view1Pos ? { x: Math.round(view1Pos.x), y: Math.round(view1Pos.y) } : null,
+        view2: view2Pos ? { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) } : null
+    });
+    
+    // Get the correct width of the second viewer's viewport
+    const view2Width = viewer2.canvas.clientWidth;
+    
+    // For the visualization overlay, we need to adjust the second viewer's coordinates
+    // to account for the split screen layout where the second view is positioned
+    // to the right of the first view
+    const adjustedView2Pos = view2Pos ? { 
+        x: view2Pos.x + viewer1.canvas.clientWidth, // Add full width of first viewer
+        y: view2Pos.y
+    } : null;
+    
+    console.log('Adjusted coords for overlay:', {
+        original: view2Pos ? { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) } : null,
+        adjusted: adjustedView2Pos ? { x: Math.round(adjustedView2Pos.x), y: Math.round(adjustedView2Pos.y) } : null,
+        viewer1Width: viewer1.canvas.clientWidth,
+        viewer2Width: view2Width
+    });
+    
+    // Create the matching point data structure using the direct projections
+    const matchingPoint = {
+        point3D: sceneSetup.virtualObject,
+        view1Pos: view1Pos,
+        view2Pos: adjustedView2Pos,
+        isCorrect: true,
+        // Note if either point is outside the standard viewport bounds
+        isForcedMatch: !view1Pos || !view2Pos || 
+            !isInViewport(view1Pos, viewer1.canvas.width/2, viewer1.canvas.height) ||
+            !isInViewport(view2Pos, viewer2.canvas.width/2, viewer2.canvas.height)
+    };
+    
+    const matchingPoints = [matchingPoint];
+    const isValid = view1Pos && view2Pos;
+    
+    // Create debug info
+    const debugInfo = {
+        duration: 0,
+        totalPoints: matchingPoints.length,
+        validPoints: isValid ? 1 : 0,
+        inView1: view1Pos ? true : false,
+        inView2: view2Pos ? true : false,
+        finalView1Pos: view1Pos ? { x: Math.round(view1Pos.x), y: Math.round(view1Pos.y) } : null,
+        finalView2Pos: view2Pos ? { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) } : null
+    };
+    
+    // Helper function to check if a point is within viewport bounds
+    function isInViewport(pos, width, height) {
+        if (!pos) return false;
+        const margin = Math.min(width, height) * 0.1; // 10% margin
+        return pos.x >= margin && pos.x <= width - margin && 
+               pos.y >= margin && pos.y <= height - margin;
+    }
     
     if (!isValid) {
         console.warn("⚠️ Object projection validation issue");
