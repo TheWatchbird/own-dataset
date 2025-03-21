@@ -2,7 +2,7 @@
  * Drone View Matching Points - Main application
  */
 
-import { CESIUM_TOKEN, VIEW_SETTINGS, VIEWER_SETTINGS } from './config.js';
+import { CESIUM_TOKEN, VIEW_SETTINGS, VIEWER_SETTINGS1, VIEWER_SETTINGS2 } from './config.js';
 import { setupCameraViews, generateRandomLocation, CameraView } from './sceneGenerator.js';
 import { drawMatchingLines, showLoading, showError, hideLoading } from './visualization.js';
 import { 
@@ -52,8 +52,8 @@ function initApp() {
  */
 function createViewers() {
     // Create camera view instances for each view
-    const cameraView1 = new CameraView('view1', VIEW_SETTINGS.view1, VIEWER_SETTINGS);
-    const cameraView2 = new CameraView('view2', VIEW_SETTINGS.view2, VIEWER_SETTINGS);
+    const cameraView1 = new CameraView('view1', VIEW_SETTINGS.view1, VIEWER_SETTINGS1);
+    const cameraView2 = new CameraView('view2', VIEW_SETTINGS.view2, VIEWER_SETTINGS2);
     
     // Store the Cesium viewer instances for compatibility with existing code
     viewer1 = cameraView1.viewer;

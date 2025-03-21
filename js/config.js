@@ -79,7 +79,7 @@ const VIEW_SETTINGS = {
 };
 
 // Common Cesium viewer settings
-const VIEWER_SETTINGS = {
+const VIEWER_SETTINGS1 = {
     infoBox: false,
     selectionIndicator: false,
     animation: false,
@@ -91,7 +91,22 @@ const VIEWER_SETTINGS = {
     homeButton: false,
     fullscreenButton: false
 };
-
+const VIEWER_SETTINGS2 = {
+    imageryProvider: new Cesium.ArcGisMapServerImageryProvider({
+        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+        enablePickFeatures: false
+    }),
+    infoBox: false,
+    selectionIndicator: false,
+    animation: false,
+    timeline: false,
+    baseLayerPicker: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    geocoder: false,
+    homeButton: false,
+    fullscreenButton: false
+}
 // Export the constants
 export { 
     CESIUM_TOKEN, 
@@ -99,5 +114,6 @@ export {
     DRONE_PARAMS, 
     MATCH_CRITERIA, 
     VIEW_SETTINGS,
-    VIEWER_SETTINGS 
+    VIEWER_SETTINGS1,
+    VIEWER_SETTINGS2,
 };
