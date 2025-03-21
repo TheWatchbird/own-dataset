@@ -2,8 +2,8 @@
  * Drone View Matching Points - Main application
  */
 
-import { CESIUM_TOKEN, LOCATIONS } from './config.js';
-import { setupCameraViews } from './sceneGenerator.js';
+import { CESIUM_TOKEN } from './config.js';
+import { setupCameraViews, generateRandomLocation } from './sceneGenerator.js';
 import { drawMatchingLines, showLoading, showError, hideLoading } from './visualization.js';
 import { exportDataset } from './dataExport.js';
 
@@ -75,43 +75,42 @@ function createViewers() {
 }
 
 /**
- * Generate new drone views with guaranteed point matching
+ * Generate new drone views with a virtual object in both views
  */
 async function generateNewViews() {
     try {
         console.clear();
-        console.log("=== GENERATING NEW DRONE VIEWS ===");
+        console.log("=== GENERATING NEW DRONE VIEWS WITH VIRTUAL OBJECT ===");
         
         // Clear previous matching points
         matchingPoints = [];
         
         // Show loading message
-        showLoading('Generating drone views...');
+        showLoading('Generating drone views with virtual object...');
         
-        // Pick a random location
-        const randomLocationIndex = Math.floor(Math.random() * LOCATIONS.length);
-        currentLocation = LOCATIONS[randomLocationIndex];
+        // Generate a random location
+        currentLocation = generateRandomLocation();
         
         console.log("Selected location:", currentLocation);
         
         // Create fresh viewers
         createViewers();
         
-        // Generate matching views
+        // Generate scene with cameras and virtual object
         const result = await setupCameraViews(viewer1, viewer2, currentLocation);
         
-        // Store matching points
+        // Store matching points (projections of the virtual object)
         matchingPoints = result.matchingPoints;
         
         // Log the results
-        console.log(`Generated ${matchingPoints.length} matching points:`, matchingPoints);
+        console.log(`Virtual object projected to both views:`, matchingPoints);
         
         // Update stats and visualization
         updateStats(result.stats);
         
         // Draw matching lines with a slight delay to ensure canvas is ready
         setTimeout(() => {
-            console.log('Drawing matching lines with points:', matchingPoints);
+            console.log('Drawing virtual object projections:', matchingPoints);
             drawMatchingLines(matchingPoints);
         }, 100);
         
@@ -196,20 +195,37 @@ function updateStats(stats) {
         distanceEl.textContent = typeof stats.distance === 'number' ? stats.distance : '?';
     }
     
-    // Update debug panel
+    // Update debug panel with detailed information
     const debugPanel = document.getElementById('debug-panel');
     if (debugPanel) {
         const validPoints = stats.debug.validPoints;
         const totalPoints = stats.debug.totalPoints;
+        const finalView1Pos = stats.debug.finalView1Pos ? 
+            `(${stats.debug.finalView1Pos.x}, ${stats.debug.finalView1Pos.y})` : 'Unknown';
+        const finalView2Pos = stats.debug.finalView2Pos ? 
+            `(${stats.debug.finalView2Pos.x}, ${stats.debug.finalView2Pos.y})` : 'Unknown';
+        const forcedMatch = stats.debug.isForcedMatch ? 'Yes' : 'No';
+        const inView1 = stats.debug.inView1 ? 'Yes' : 'No';
+        const inView2 = stats.debug.inView2 ? 'Yes' : 'No';
         
         debugPanel.innerHTML = `
-            <h4>Debug Info:</h4>
-            <div>Matching Points: ${totalPoints}</div>
-            <div>Valid Points: ${validPoints}</div>
+            <h4>Virtual Object:</h4>
+            <div>Location: ${stats.objectCoords ? `${stats.objectCoords.lat}, ${stats.objectCoords.lon}` : 'Unknown'}</div>
+            <div>Height: ${stats.objectCoords ? `${stats.objectCoords.height}m` : 'Unknown'}</div>
+            <div>Visible in View 1: ${inView1}</div>
+            <div>Visible in View 2: ${inView2}</div>
+            <div>View 1 Position: ${finalView1Pos}</div>
+            <div>View 2 Position: ${finalView2Pos}</div>
+            <div>Edge Match: ${forcedMatch}</div>
+            
+            <h4>Camera Setup:</h4>
             <div>Drone 1 Height: ${stats.altitude1}m</div>
             <div>Drone 2 Height: ${stats.altitude2}m</div>
             <div>Distance: ${stats.distance}m</div>
-            <div>Valid Match: ${validPoints >= 5 ? 'Yes' : 'No'}</div>
+            <div>Angle Difference: ${stats.headingDiff || '?'}°</div>
+            <div>Pitch Difference: ${stats.pitchDiff || '?'}°</div>
+            
+            <h4>Performance:</h4>
             <div>Processing Time: ${stats.debug.duration}ms</div>
         `;
     }

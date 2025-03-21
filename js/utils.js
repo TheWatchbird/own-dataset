@@ -41,33 +41,46 @@ function calculateOrientationToTarget(cameraPosition, targetPoint) {
 }
 
 /**
- * Checks if a 3D point is visible from a camera position using ray casting
- * @param {Cesium.Scene} scene - The Cesium scene
- * @param {Cesium.Cartesian3} cameraPosition - The camera position
+ * Checks if a 3D point is visible from a camera position using view frustum checks
  * @param {Cesium.Cartesian3} point - The point to check visibility for
+ * @param {Cesium.Cartesian3} cameraPosition - The camera position
+ * @param {Cesium.Cartesian3} cameraDirection - The camera's view direction
+ * @param {Cesium.Cartesian3} cameraUp - The camera's up vector
  * @returns {Boolean} - True if the point is visible, false otherwise
  */
-function isPointVisibleFromCamera(scene, cameraPosition, point) {
-    // Create ray from camera to point
-    const direction = Cesium.Cartesian3.subtract(
+function isPointVisibleFromCamera(point, cameraPosition, cameraDirection, cameraUp) {
+    // Calculate vector from camera to point
+    const toPoint = Cesium.Cartesian3.subtract(
         point, 
         cameraPosition, 
         new Cesium.Cartesian3()
     );
-    Cesium.Cartesian3.normalize(direction, direction);
     
-    // Create ray
-    const ray = new Cesium.Ray(cameraPosition, direction);
+    // Normalize the vector
+    Cesium.Cartesian3.normalize(toPoint, toPoint);
     
-    // Check for intersection with terrain
-    const result = scene.globe.pick(ray, scene);
+    // Calculate dot product with camera direction
+    const dotProduct = Cesium.Cartesian3.dot(toPoint, cameraDirection);
     
-    // If no intersection, point is not visible
-    if (!result) return false;
+    // Point is behind camera if dot product is negative or very close to 0
+    if (dotProduct < 0.1) return false; // Allow slightly behind camera
     
-    // Check if the intersection point is close to our target point (within threshold)
-    const distance = Cesium.Cartesian3.distance(result, point);
-    return distance < 10.0; // If less than 10 meters, consider it visible
+    // Calculate right vector (cross product of up and direction)
+    const right = Cesium.Cartesian3.cross(cameraDirection, cameraUp, new Cesium.Cartesian3());
+    Cesium.Cartesian3.normalize(right, right);
+    
+    // Calculate horizontal angle (should be within ±75 degrees)
+    const horizontalDot = Cesium.Cartesian3.dot(toPoint, right);
+    if (Math.abs(horizontalDot) > 0.966) return false; // cos(75°) ≈ 0.966
+    
+    // Calculate vertical angle using camera direction
+    const verticalDot = Cesium.Cartesian3.dot(toPoint, cameraDirection);
+    const verticalAngle = Math.acos(verticalDot);
+    
+    // Check if vertical angle is within reasonable range (about ±60 degrees)
+    if (verticalAngle > Math.PI/3) return false;
+    
+    return true;
 }
 
 /**
