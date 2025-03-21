@@ -39,14 +39,14 @@ function initApp() {
 }
 
 /**
- * Create Cesium viewers with appropriate settings
+ * Create Cesium viewers with appropriate settings and different imagery providers
  */
 function createViewers() {
     // Remove old viewers' DOM elements if they exist
     document.getElementById('view1').innerHTML = '';
     document.getElementById('view2').innerHTML = '';
     
-    // Create new viewers with clean state
+    // Create first viewer with default settings
     viewer1 = new Cesium.Viewer('view1', {
         infoBox: false,
         selectionIndicator: false,
@@ -60,6 +60,7 @@ function createViewers() {
         fullscreenButton: false
     });
     
+    // Create second viewer with default settings
     viewer2 = new Cesium.Viewer('view2', {
         infoBox: false,
         selectionIndicator: false,
@@ -72,6 +73,28 @@ function createViewers() {
         homeButton: false,
         fullscreenButton: false
     });
+    
+    // Simple visual differentiation between viewers
+    
+    // For the first viewer, use standard settings
+    // Add a subtle shadow to viewer1 (original satellite view)
+    viewer1.scene.globe.nightFadeOutDistance = 40000;
+    viewer1.scene.globe.nightFadeInDistance = 10000;
+    
+    // For the second viewer, create a visually distinctive style
+    // Apply a colored filter effect to the second viewer
+    viewer2.scene.globe.nightFadeOutDistance = 1.0; // Stronger effect
+    viewer2.scene.globe.nightFadeInDistance = 1.0;
+    
+    // Different coloring for the second view
+    viewer2.scene.globe.atmosphereLightIntensity = 5.0;
+    viewer2.scene.globe.atmosphereHueShift = 0.15; // Slightly blue shift
+    viewer2.scene.globe.atmosphereSaturationShift = 0.8; // More intense colors
+    
+    // Set different fog density
+    viewer1.scene.fog.density = 0.0001;
+    viewer2.scene.fog.density = 0.0005;
+    viewer2.scene.fog.minimumBrightness = 0.01;
 }
 
 /**
@@ -174,10 +197,12 @@ function toggleDebugPanel() {
 function updateStats(stats) {
     if (!stats) return;
     
-    // Update location
+    // Update location with actual coordinates
     const locationEl = document.getElementById('location-name');
-    if (locationEl) {
-        locationEl.textContent = stats.location || 'Unknown';
+    if (locationEl && stats.objectCoords) {
+        locationEl.textContent = `${stats.objectCoords.lat.toFixed(5)}, ${stats.objectCoords.lon.toFixed(5)}`;
+    } else if (locationEl) {
+        locationEl.textContent = 'Unknown';
     }
     
     // Update altitudes
