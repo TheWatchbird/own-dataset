@@ -78,6 +78,36 @@ html, body, #container {
     background: #0056b3;
 }
 
+.dataset-controls {
+    margin-top: 10px;
+    padding: 5px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+}
+
+.dataset-controls input {
+    width: 50px;
+    background: rgba(0,0,0,0.3);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 3px;
+    padding: 2px 5px;
+    margin: 0 5px;
+}
+
+#generate-dataset-btn {
+    background: #7b68ee;
+}
+
+#generate-dataset-btn:hover {
+    background: #6a5acd;
+}
+
+#dataset-progress {
+    margin-left: 10px;
+    font-weight: bold;
+    color: #7b68ee;
+}
+
 .view-label {
     position: absolute;
     top: 10px;

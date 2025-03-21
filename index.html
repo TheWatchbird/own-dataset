@@ -8,12 +8,20 @@
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.112/Build/Cesium/Cesium.js"></script>
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.112/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
     <link href="css/styles.css" rel="stylesheet">
+    <!-- JSZip for archive creation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
 <body>
     <div class="controls">
         <button id="generate-btn">Generate New Views</button>
         <button id="retry-btn" style="display: none;">Retry Match</button>
         <button id="export-btn">Export Dataset</button>
+        <div class="dataset-controls">
+            <label>Pairs: <input type="number" id="dataset-count" min="1" max="100" value="5"></label>
+            <button id="generate-dataset-btn">Generate Dataset</button>
+            <span id="dataset-progress" style="display: none;">Progress: <span id="dataset-progress-count">0</span>/<span id="dataset-progress-total">0</span></span>
+        </div>
     </div>
     <div class="view-container">
         <div id="view1" class="cesium-view"></div>

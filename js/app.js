@@ -5,7 +5,12 @@
 import { CESIUM_TOKEN } from './config.js';
 import { setupCameraViews, generateRandomLocation } from './sceneGenerator.js';
 import { drawMatchingLines, showLoading, showError, hideLoading } from './visualization.js';
-import { exportDataset } from './dataExport.js';
+import { 
+    exportDataset, 
+    exportDatasetCollection, 
+    clearDatasetCollection, 
+    getDatasetCollectionSize 
+} from './dataExport.js';
 
 // Global state
 let viewer1, viewer2;
@@ -33,6 +38,9 @@ function initApp() {
     document.getElementById('retry-btn')?.addEventListener('click', retryGeneration);
     document.getElementById('export-btn').addEventListener('click', handleExport);
     document.getElementById('debug-toggle')?.addEventListener('click', toggleDebugPanel);
+    
+    // Add dataset generation event listener
+    document.getElementById('generate-dataset-btn')?.addEventListener('click', generateDataset);
     
     // Generate initial views after a short delay
     setTimeout(generateNewViews, 1000);
@@ -236,8 +244,184 @@ function updateStats(stats) {
     }
 }
 
+/**
+ * Generate a dataset with multiple view pairs
+ */
+async function generateDataset() {
+    try {
+        // Get desired count from input
+        const count = parseInt(document.getElementById('dataset-count').value, 10);
+        if (isNaN(count) || count < 1) {
+            showError("Please enter a valid number of pairs (minimum 1)");
+            return;
+        }
+        
+        // Clear any previous collection
+        clearDatasetCollection();
+        
+        // Show progress
+        const progressElement = document.getElementById('dataset-progress');
+        const progressCountElement = document.getElementById('dataset-progress-count');
+        const progressTotalElement = document.getElementById('dataset-progress-total');
+        
+        progressElement.style.display = 'inline-block';
+        progressTotalElement.textContent = count;
+        progressCountElement.textContent = '0';
+        
+        // Disable generate button during process
+        const generateButton = document.getElementById('generate-dataset-btn');
+        generateButton.disabled = true;
+        generateButton.textContent = 'Generating...';
+        
+        // Generate each pair and add to collection
+        for (let i = 0; i < count; i++) {
+            // Update progress
+            progressCountElement.textContent = i;
+            
+            // Generate new views
+            await generateNewViews();
+            
+            // Wait for both scenes to be fully loaded and rendered before capturing
+            showLoading('Waiting for scenes to load completely...');
+            
+            // Create a promise that resolves when both viewers are ready
+            await Promise.all([
+                waitForSceneToLoad(viewer1),
+                waitForSceneToLoad(viewer2)
+            ]);
+            
+            // Additional render cycles to ensure everything is displayed
+            viewer1.scene.render();
+            viewer2.scene.render();
+            
+            // Force higher detail level imagery for better screenshots
+            viewer1.scene.globe.maximumScreenSpaceError = 0.5; // Very high detail (lower value = more detail)
+            viewer2.scene.globe.maximumScreenSpaceError = 0.5;
+            
+            // Force imagery to load at highest available resolution
+            viewer1.scene.globe.preloadSiblings = true;
+            viewer2.scene.globe.preloadSiblings = true;
+            
+            // Make sure the rendering has actually completed with high-quality imagery
+            await new Promise(resolve => {
+                // Show feedback about what's happening
+                showLoading('Enhancing image quality...');
+                
+                // Multiple renders with a shorter pause between them
+                const totalRenders = 3; // Reduced from 5 to 3
+                let renderCount = 0;
+                
+                function performRender() {
+                    if (renderCount >= totalRenders) {
+                        // Wait a moment to ensure GPU has completed all work
+                        setTimeout(resolve, 500); // Reduced from 1000ms to 500ms
+                        return;
+                    }
+                    
+                    // Force renders
+                    viewer1.scene.render();
+                    viewer2.scene.render();
+                    renderCount++;
+                    
+                    // Update loading message with progress
+                    showLoading(`Enhancing image quality (${renderCount}/${totalRenders})`);
+                    
+                    // Wait before next render - shorter pause
+                    setTimeout(performRender, 400); // Reduced from 800ms to 400ms
+                }
+                
+                // Start the render sequence
+                performRender();
+            });
+            
+            hideLoading();
+            
+            // Add current state to collection
+            await exportDataset(viewer1, viewer2, matchingPoints, currentLocation.name, true);
+            
+            // Additional delay between pairs
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // All done - export collection
+        const result = await exportDatasetCollection();
+        
+        // Reset UI
+        progressElement.style.display = 'none';
+        generateButton.disabled = false;
+        generateButton.textContent = 'Dataset Generated!';
+        
+        // Reset button text after delay
+        setTimeout(() => {
+            generateButton.textContent = 'Generate Dataset';
+        }, 3000);
+        
+    } catch (error) {
+        showError("Dataset generation error: " + error.message);
+        console.error("Dataset generation error:", error);
+        
+        // Reset UI on error
+        document.getElementById('dataset-progress').style.display = 'none';
+        document.getElementById('generate-dataset-btn').disabled = false;
+        document.getElementById('generate-dataset-btn').textContent = 'Generate Dataset';
+    }
+}
+
+/**
+ * Wait for a Cesium scene to be fully loaded using a simpler approach
+ * @param {Cesium.Viewer} viewer - The Cesium viewer to check
+ * @returns {Promise} - Promise that resolves when the scene is loaded
+ */
+function waitForSceneToLoad(viewer) {
+    return new Promise(resolve => {
+        if (!viewer || !viewer.scene) {
+            resolve(); // No viewer, resolve immediately
+            return;
+        }
+        
+        const scene = viewer.scene;
+        
+        // Force a higher detail level for better imagery quality
+        if (scene.globe) {
+            scene.globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
+        }
+        
+        // Initial render to kick off loading
+        scene.render();
+        
+        // Track the state to prevent multiple resolves
+        let hasResolved = false;
+        
+        // Simple timeout-based approach to allow imagery to load
+        // This avoids potential stack overflow issues with event listeners
+        function waitForLoading() {
+            // Render to progress loading
+            scene.render();
+            
+            // Check if we're done
+            if (hasResolved) {
+                return;
+            }
+            
+            // Set a flag so we can check it in our timeout handler
+            hasResolved = true;
+            
+            // Short timeout to allow additional imagery to load
+            setTimeout(() => {
+                // Simple final render sequence
+                scene.render();
+                scene.render();
+                resolve();
+            }, 1500);
+        }
+        
+        // Start waiting
+        waitForLoading();
+    });
+}
+
 // Export public functions
-export { initApp, generateNewViews, handleExport };
+export { initApp, generateNewViews, handleExport, generateDataset };
 
 // Initialize the application when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
