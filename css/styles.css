@@ -102,6 +102,14 @@ html, body, #container {
     background: #6a5acd;
 }
 
+#select-directory-btn {
+    background: #28a745;
+}
+
+#select-directory-btn:hover {
+    background: #218838;
+}
+
 #dataset-progress {
     margin-left: 10px;
     font-weight: bold;

@@ -5,6 +5,154 @@
 // Store multiple datasets
 let datasetCollection = [];
 
+// File System Access API handle to the selected directory
+let directoryHandle = null;
+
+/**
+ * Checks if the File System Access API is supported by the browser
+ * @returns {Boolean} - True if supported, false otherwise
+ */
+function isFileSystemAccessSupported() {
+    return 'showDirectoryPicker' in window;
+}
+
+/**
+ * Requests directory access from the user
+ * @returns {Promise<FileSystemDirectoryHandle>} - Promise resolving to directory handle
+ */
+async function requestDirectoryAccess() {
+    try {
+        // Check support first
+        if (!isFileSystemAccessSupported()) {
+            throw new Error("File System Access API not supported by your browser. Please use Chrome, Edge or another Chromium-based browser.");
+        }
+        
+        // Request the user to select a directory
+        directoryHandle = await window.showDirectoryPicker({
+            mode: 'readwrite',
+            startIn: 'downloads'
+        });
+        
+        return directoryHandle;
+    } catch (error) {
+        console.error("Directory access error:", error);
+        throw error;
+    }
+}
+
+/**
+ * Checks if we have directory access and requests it if needed
+ * @returns {Promise<Boolean>} - Promise resolving to true if we have access
+ */
+async function ensureDirectoryAccess() {
+    // If we already have a directory handle, verify we still have permission
+    if (directoryHandle) {
+        try {
+            // Check if permission is still granted
+            const options = { mode: 'readwrite' };
+            const permissionStatus = await directoryHandle.requestPermission(options);
+            
+            if (permissionStatus === 'granted') {
+                return true;
+            }
+            // If permission was revoked, try to request access again
+            directoryHandle = null;
+        } catch (error) {
+            console.warn("Permission verification failed:", error);
+            directoryHandle = null;
+        }
+    }
+    
+    // Request directory access
+    try {
+        await requestDirectoryAccess();
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+/**
+ * Save file directly to the selected directory using File System Access API
+ * @param {String} filename - Name of the file to save
+ * @param {Blob|String} content - Content to save (Blob or String)
+ * @param {String} subfolderName - Optional subfolder name
+ * @returns {Promise} - Promise resolving when the file is saved
+ */
+async function saveFileToDirectory(filename, content, subfolderName = null) {
+    if (!directoryHandle) {
+        throw new Error("No directory access. Please select a directory first.");
+    }
+    
+    try {
+        let targetDirHandle = directoryHandle;
+        
+        // Create subfolder if needed
+        if (subfolderName) {
+            try {
+                targetDirHandle = await directoryHandle.getDirectoryHandle(subfolderName, { create: true });
+            } catch (error) {
+                console.error(`Error creating subfolder ${subfolderName}:`, error);
+                // Fall back to root directory
+                targetDirHandle = directoryHandle;
+            }
+        }
+        
+        // Get a file handle
+        const fileHandle = await targetDirHandle.getFileHandle(filename, { create: true });
+        
+        // Create a writable stream
+        const writable = await fileHandle.createWritable();
+        
+        // Convert content to proper format if it's not a Blob
+        let writeContent = content;
+        
+        if (typeof content === 'string') {
+            if (content.startsWith('data:')) {
+                // Handle data URLs (like from canvas.toDataURL)
+                try {
+                    // Extract the content type and base64 data
+                    const matches = content.match(/^data:([^;]+);base64,(.+)$/);
+                    if (!matches || matches.length !== 3) {
+                        throw new Error('Invalid data URL format');
+                    }
+                    
+                    const contentType = matches[1];
+                    const base64Data = matches[2];
+                    
+                    // Decode base64
+                    const binaryString = atob(base64Data);
+                    const bytes = new Uint8Array(binaryString.length);
+                    
+                    // Convert to byte array
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    
+                    // Create blob with correct MIME type
+                    writeContent = new Blob([bytes.buffer], { type: contentType });
+                } catch (error) {
+                    console.error('Error converting data URL to blob:', error);
+                    // Fallback to plain text if conversion fails
+                    writeContent = new Blob([content], { type: 'text/plain' });
+                }
+            } else {
+                // Plain text content
+                writeContent = new Blob([content], { type: 'text/plain' });
+            }
+        }
+        
+        // Write the content and close the stream
+        await writable.write(writeContent);
+        await writable.close();
+        
+        return { success: true, path: `${subfolderName ? subfolderName + '/' : ''}${filename}` };
+    } catch (error) {
+        console.error("Error saving file:", error);
+        throw error;
+    }
+}
+
 /**
  * Captures the current state and exports it as a dataset
  * @param {Cesium.Viewer} viewer1 - First Cesium viewer
@@ -16,6 +164,7 @@ let datasetCollection = [];
  * @param {String} cleanView2Image - Clean screenshot of view2 without entities
  * @param {String} debugView1 - Debug screenshot of view1 with entities
  * @param {String} debugView2 - Debug screenshot of view2 with entities
+ * @param {Number} pairIndex - Optional index for the pair when using File System Access API
  * @returns {Promise} - Promise resolving when export is complete
  */
 function exportDataset(
@@ -27,7 +176,8 @@ function exportDataset(
     cleanView1Image = null,
     cleanView2Image = null,
     debugView1 = null,
-    debugView2 = null
+    debugView2 = null,
+    pairIndex = null
 ) {
     return new Promise(async (resolve, reject) => {
         try {
@@ -219,7 +369,7 @@ function exportDataset(
             }
             
             // If adding to collection, store and return
-            if (addToCollection) {
+            if (addToCollection && directoryHandle === null) {
                 datasetCollection.push(dataset);
                 resolve({ 
                     success: true, 
@@ -229,20 +379,104 @@ function exportDataset(
                 return;
             }
             
-            // Create and trigger download
-            const dataStr = "data:text/json;charset=utf-8," + 
-                encodeURIComponent(JSON.stringify(dataset, null, 2));
+            // If we have direct file system access and a pair index, save directly to the directory
+            if (directoryHandle !== null && dataset.metadata.images) {
+                try {
+                    // Format the pair number and location for folder name
+                    const locationStr = locationName.replace(/[^0-9.,]/g, '');
+                    const pairNum = pairIndex !== null ? pairIndex + 1 : new Date().getTime();
+                    const folderName = `pair_${pairNum}_${locationStr}`;
+                    
+                    // Save images
+                    if (dataset.metadata.images.view1_clean) {
+                        await saveFileToDirectory('view1.jpg', dataset.metadata.images.view1_clean, folderName);
+                        await saveFileToDirectory('view2.jpg', dataset.metadata.images.view2_clean, folderName);
+                        await saveFileToDirectory('debug.jpg', dataset.metadata.images.combined_debug, folderName);
+                    }
+                    
+                    // Create a clean version of the dataset without the image data URLs
+                    const cleanDataset = JSON.parse(JSON.stringify(dataset));
+                    if (cleanDataset.metadata.images) {
+                        cleanDataset.metadata.images = {
+                            view1: 'view1.jpg',
+                            view2: 'view2.jpg',
+                            debug: 'debug.jpg'
+                        };
+                    }
+                    
+                    // Save metadata
+                    const pairData = {
+                        metadata: {
+                            index: pairNum,
+                            location: dataset.metadata.location,
+                            timestamp: dataset.metadata.timestamp,
+                            distance: dataset.metadata.distance,
+                            cameras: dataset.metadata.cameras
+                        },
+                        matchingPoints: dataset.matchingPoints
+                    };
+                    
+                    await saveFileToDirectory('metadata.json', 
+                        JSON.stringify(pairData, null, 2), 
+                        folderName
+                    );
+                    
+                    // Save README
+                    await saveFileToDirectory('README.txt', 
+                        `Pair ${pairNum}\n` + 
+                        `GPS Coordinates: ${dataset.metadata.location}\n` +
+                        `Timestamp: ${dataset.metadata.timestamp}\n` +
+                        `Distance between cameras: ${dataset.metadata.distance}m\n` +
+                        `Files:\n` +
+                        `- view1.jpg: Clean image from first view (no markers or entities)\n` +
+                        `- view2.jpg: Clean image from second view (no markers or entities)\n` +
+                        `- debug.jpg: Combined side-by-side debug view with markers\n` +
+                        `- metadata.json: Point correspondence and camera data\n`, 
+                        folderName
+                    );
+                    
+                    resolve({ 
+                        success: true, 
+                        path: folderName,
+                        savedDirectly: true
+                    });
+                    return;
+                } catch (error) {
+                    console.error("Error saving to directory:", error);
+                    // Fall back to collection if directory save fails
+                    if (addToCollection) {
+                        datasetCollection.push(dataset);
+                        resolve({ 
+                            success: true, 
+                            collectionSize: datasetCollection.length, 
+                            dataset,
+                            directSaveError: error.message
+                        });
+                        return;
+                    }
+                }
+            }
             
-            const filename = `drone_matching_${locationName.replace(/\s+/g, '_')}_${new Date().getTime()}.json`;
-            
-            const downloadLink = document.createElement('a');
-            downloadLink.setAttribute("href", dataStr);
-            downloadLink.setAttribute("download", filename);
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            downloadLink.remove();
-            
-            resolve({ success: true, filename });
+            // Default behavior - triggered download (when not using File System API)
+            if (directoryHandle === null) {
+                // Create and trigger download
+                const dataStr = "data:text/json;charset=utf-8," + 
+                    encodeURIComponent(JSON.stringify(dataset, null, 2));
+                
+                const filename = `drone_matching_${locationName.replace(/\s+/g, '_')}_${new Date().getTime()}.json`;
+                
+                const downloadLink = document.createElement('a');
+                downloadLink.setAttribute("href", dataStr);
+                downloadLink.setAttribute("download", filename);
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                downloadLink.remove();
+                
+                resolve({ success: true, filename });
+            } else {
+                // If we have directory access but got here, it means there was an error
+                reject(new Error("Failed to save dataset directly to directory"));
+            }
             
         } catch (error) {
             console.error("Export error:", error);
@@ -503,5 +737,8 @@ export {
     exportDatasetCollection, 
     clearDatasetCollection, 
     getDatasetCollectionSize,
-    createCombinedImage
+    createCombinedImage,
+    requestDirectoryAccess,
+    ensureDirectoryAccess,
+    isFileSystemAccessSupported
 };

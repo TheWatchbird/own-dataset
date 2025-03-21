@@ -9,7 +9,10 @@ import {
     exportDataset, 
     exportDatasetCollection, 
     clearDatasetCollection, 
-    getDatasetCollectionSize 
+    getDatasetCollectionSize,
+    requestDirectoryAccess,
+    ensureDirectoryAccess,
+    isFileSystemAccessSupported
 } from './dataExport.js';
 
 // Global state
@@ -27,6 +30,28 @@ function initApp() {
     // Create viewers
     createViewers();
     
+    // Check if File System Access API is supported
+    const selectDirectoryBtn = document.getElementById('select-directory-btn');
+    const generateDatasetBtn = document.getElementById('generate-dataset-btn');
+    
+    if (!isFileSystemAccessSupported()) {
+        // Disable buttons and show warning
+        if (selectDirectoryBtn) {
+            selectDirectoryBtn.disabled = true;
+            selectDirectoryBtn.title = "Your browser doesn't support the File System Access API";
+            selectDirectoryBtn.textContent = "API Not Supported";
+            selectDirectoryBtn.style.background = "#aaa";
+        }
+        
+        // Add warning to the dataset button
+        if (generateDatasetBtn) {
+            generateDatasetBtn.title = "Large datasets may crash due to memory limitations";
+        }
+        
+        // Show warning
+        console.warn("File System Access API not supported by this browser. Large datasets may crash the browser.");
+    }
+    
     // Set up event listeners
     document.getElementById('generate-btn').addEventListener('click', () => {
         generateNewViews().catch(error => {
@@ -41,6 +66,19 @@ function initApp() {
     
     // Add dataset generation event listener
     document.getElementById('generate-dataset-btn')?.addEventListener('click', generateDataset);
+    
+    // Add directory selection button event listener if it exists
+    document.getElementById('select-directory-btn')?.addEventListener('click', async () => {
+        try {
+            showLoading('Requesting directory access...');
+            await requestDirectoryAccess();
+            hideLoading();
+            showError('Directory access granted!', 'success');
+        } catch (error) {
+            hideLoading();
+            showError('Directory access denied: ' + error.message);
+        }
+    });
     
     // Generate initial views after a short delay
     setTimeout(generateNewViews, 1000);
@@ -217,6 +255,15 @@ async function generateDataset() {
             return;
         }
         
+        // Request directory access permission before starting
+        showLoading('Requesting directory access...');
+        const hasAccess = await ensureDirectoryAccess();
+        if (!hasAccess) {
+            showError("Directory access is required to save dataset. Please grant permission.");
+            hideLoading();
+            return;
+        }
+        
         // Clear any previous collection
         clearDatasetCollection();
         
@@ -246,7 +293,7 @@ async function generateDataset() {
         etaElement.textContent = 'Calculating...';
         progressElement.appendChild(etaElement);
         
-        // Generate each pair and add to collection
+        // Generate each pair and save directly to disk
         for (let i = 0; i < count; i++) {
             // Update progress
             progressCountElement.textContent = i;
@@ -395,18 +442,27 @@ async function generateDataset() {
             const debugView1 = viewer1.canvas.toDataURL('image/jpeg', 0.95);
             const debugView2 = viewer2.canvas.toDataURL('image/jpeg', 0.95);
             
-            // Add current state to collection with all images
-            await exportDataset(
-                viewer1, 
-                viewer2, 
-                matchingPoints, 
-                currentLocation.name, 
-                true,
-                cleanView1Image,
-                cleanView2Image,
-                debugView1,
-                debugView2
-            );
+            // Save the current pair directly to the selected directory
+            showLoading(`Saving pair ${i+1}/${count} to disk...`);
+            try {
+                await exportDataset(
+                    viewer1, 
+                    viewer2, 
+                    matchingPoints, 
+                    currentLocation.name, 
+                    false, // Not adding to collection anymore
+                    cleanView1Image,
+                    cleanView2Image,
+                    debugView1,
+                    debugView2,
+                    i // Pass the index for folder naming
+                );
+            } catch (error) {
+                console.error("Error saving pair:", error);
+                showError(`Error saving pair ${i+1}: ${error.message}`);
+                // Continue with next pair despite error
+            }
+            hideLoading();
             
             // Calculate and update ETA
             const currentTime = Date.now();
@@ -430,8 +486,7 @@ async function generateDataset() {
             etaElement.textContent = `ETA: ${etaMinutes}m ${etaSeconds}s`;
         }
         
-        // All done - export collection
-        const result = await exportDatasetCollection();
+        // All done - no need to export the collection, as we've saved each pair individually
         
         // Reset UI
         progressElement.style.display = 'none';

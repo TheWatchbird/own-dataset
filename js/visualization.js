@@ -215,16 +215,51 @@ function showLoading(message) {
 }
 
 /**
- * Display error message on canvas
- * @param {String} message - The error message
+ * Display error or success message on canvas
+ * @param {String} message - The message to display
+ * @param {String} type - Message type: 'error' (default) or 'success'
  */
-function showError(message) {
+function showError(message, type = 'error') {
     if (!ctx || !canvas) initCanvas();
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = '16px Arial';
-    ctx.fillStyle = 'red';
-    ctx.fillText('Error: ' + message, 20, canvas.height / 2);
+    
+    // Choose color based on message type
+    if (type === 'success') {
+        ctx.fillStyle = 'lightgreen';
+        message = 'Success: ' + message;
+    } else {
+        ctx.fillStyle = 'red';
+        message = 'Error: ' + message;
+    }
+    
+    ctx.fillText(message, 20, canvas.height / 2);
+    
+    // Also show as browser alert for better visibility
+    if (type === 'success') {
+        // Create a fixed notification that auto-hides
+        const notification = document.createElement('div');
+        notification.style.position = 'fixed';
+        notification.style.top = '20px';
+        notification.style.left = '50%';
+        notification.style.transform = 'translateX(-50%)';
+        notification.style.padding = '10px 20px';
+        notification.style.backgroundColor = type === 'success' ? 'rgba(0, 128, 0, 0.8)' : 'rgba(255, 0, 0, 0.8)';
+        notification.style.color = 'white';
+        notification.style.borderRadius = '5px';
+        notification.style.zIndex = '1000';
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            notification.style.transition = 'opacity 0.5s';
+            setTimeout(() => notification.remove(), 500);
+        }, 3000);
+    }
 }
 
 /**
