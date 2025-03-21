@@ -57,23 +57,23 @@ const VIEW_SETTINGS = {
     view2: {
         name: "Drone View 2",
         globe: {
-            nightFadeOutDistance: 1.0,
-            nightFadeInDistance: 1.0,
-            atmosphereLightIntensity: 5.0,
-            atmosphereHueShift: 0.15,
-            atmosphereSaturationShift: 0.8,
+            nightFadeOutDistance: Math.random() * 50000 + 10000,  // Random between 10000-60000
+            nightFadeInDistance: Math.random() * 20000 + 5000,   // Random between 5000-25000
+            atmosphereLightIntensity: Math.random() * 4.0 + 1.0,  // Random between 1.0-5.0
+            atmosphereHueShift: Math.random() * 0.3 - 0.15,      // Random between -0.15 to 0.15
+            atmosphereSaturationShift: Math.random() * 0.8 + 0.2, // Random between 0.2-1.0
             enableLighting: true
         },
         fog: {
-            density: 0.0005,
-            minimumBrightness: 0.01
+            density: Math.random() * 0.0002 + 0.0001,           // Random between 0.0001-0.0003 (reduced range)
+            minimumBrightness: Math.random() * 0.1 + 0.15       // Random between 0.15-0.25 (increased minimum)
         },
         imageryAdjustments: {
-            brightness: 1.1,
-            contrast: 1.2,
-            hue: 0.0,
-            saturation: 1.3,
-            gamma: 0.8
+            brightness: Math.random() * 0.2 + 0.9,              // Random between 0.9-1.1 (narrower range)
+            contrast: Math.random() * 0.2 + 1.0,                // Random between 1.0-1.2 (narrower range)
+            hue: Math.random() * 0.1 - 0.05,                    // Random between -0.05 to 0.05 (reduced range)
+            saturation: Math.random() * 0.3 + 1.0,              // Random between 1.0-1.3 (reduced range)
+            gamma: Math.random() * 0.1 + 0.95                   // Random between 0.95-1.05 (centered around 1.0)
         }
     }
 };
