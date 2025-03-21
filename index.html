@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drone View Matching Points Demo</title>
+    <link rel="icon" href="data:,">
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.112/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.112/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <link href="css/styles.css" rel="stylesheet">
+</head>
+<body>
+    <div class="controls">
+        <button id="generate-btn">Generate New Views</button>
+        <button id="retry-btn" style="display: none;">Retry Match</button>
+        <button id="export-btn">Export Dataset</button>
+    </div>
+    <div class="view-container">
+        <div id="view1" class="cesium-view"></div>
+        <div id="view2" class="cesium-view"></div>
+        <div id="view1-label" class="view-label">Drone View 1</div>
+        <div id="view2-label" class="view-label">Drone View 2</div>
+    </div>
+    
+    <!-- Debug message to verify canvas position -->
+    <div id="debug-message" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; background: rgba(0,0,0,0.8); padding: 20px; z-index: 100000;">
+        Initializing visualization...
+    </div>
+    
+    <!-- Visualization container -->
+    <div class="visualization-container">
+        <canvas id="overlay-canvas"></canvas>
+    </div>
+    
+    <div class="info-panel">
+        <h3>Drone View Point Matching</h3>
+        <p>Ukrainian drone footage from two different perspectives</p>
+        <p>Numbered points show the same physical locations viewed from different angles</p>
+        <p><span style="color: red;">Red</span> = View 1 | <span style="color: green;">Green</span> = View 2</p>
+    </div>
+    
+    <div class="stats" id="stats-panel">
+        <div>Location: <span id="location-name">Loading...</span></div>
+        <div>Drone Altitudes: <span id="drone-altitude">0</span>m</div>
+        <div>Distance: <span id="camera-distance">0</span>m</div>
+    </div>
+    
+    <button id="debug-toggle">Debug</button>
+    <div id="debug-panel" class="debug-panel">
+        <h4>Debug Info:</h4>
+        <div>Loading...</div>
+    </div>
+
+    <!-- Load application code -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
