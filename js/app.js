@@ -2,8 +2,8 @@
  * Drone View Matching Points - Main application
  */
 
-import { CESIUM_TOKEN } from './config.js';
-import { setupCameraViews, generateRandomLocation } from './sceneGenerator.js';
+import { CESIUM_TOKEN, VIEW_SETTINGS, VIEWER_SETTINGS } from './config.js';
+import { setupCameraViews, generateRandomLocation, CameraView } from './sceneGenerator.js';
 import { drawMatchingLines, showLoading, showError, hideLoading } from './visualization.js';
 import { 
     exportDataset, 
@@ -48,61 +48,22 @@ function initApp() {
 
 /**
  * Create Cesium viewers with appropriate settings and different imagery providers
+ * using the CameraView class for better encapsulation
  */
 function createViewers() {
-    // Remove old viewers' DOM elements if they exist
-    document.getElementById('view1').innerHTML = '';
-    document.getElementById('view2').innerHTML = '';
+    // Create camera view instances for each view
+    const cameraView1 = new CameraView('view1', VIEW_SETTINGS.view1, VIEWER_SETTINGS);
+    const cameraView2 = new CameraView('view2', VIEW_SETTINGS.view2, VIEWER_SETTINGS);
     
-    // Create first viewer with default settings
-    viewer1 = new Cesium.Viewer('view1', {
-        infoBox: false,
-        selectionIndicator: false,
-        animation: false,
-        timeline: false,
-        baseLayerPicker: false,
-        sceneModePicker: false,
-        navigationHelpButton: false,
-        geocoder: false,
-        homeButton: false,
-        fullscreenButton: false
-    });
+    // Store the Cesium viewer instances for compatibility with existing code
+    viewer1 = cameraView1.viewer;
+    viewer2 = cameraView2.viewer;
     
-    // Create second viewer with default settings
-    viewer2 = new Cesium.Viewer('view2', {
-        infoBox: false,
-        selectionIndicator: false,
-        animation: false,
-        timeline: false,
-        baseLayerPicker: false,
-        sceneModePicker: false,
-        navigationHelpButton: false,
-        geocoder: false,
-        homeButton: false,
-        fullscreenButton: false
-    });
-    
-    // Simple visual differentiation between viewers
-    
-    // For the first viewer, use standard settings
-    // Add a subtle shadow to viewer1 (original satellite view)
-    viewer1.scene.globe.nightFadeOutDistance = 40000;
-    viewer1.scene.globe.nightFadeInDistance = 10000;
-    
-    // For the second viewer, create a visually distinctive style
-    // Apply a colored filter effect to the second viewer
-    viewer2.scene.globe.nightFadeOutDistance = 1.0; // Stronger effect
-    viewer2.scene.globe.nightFadeInDistance = 1.0;
-    
-    // Different coloring for the second view
-    viewer2.scene.globe.atmosphereLightIntensity = 5.0;
-    viewer2.scene.globe.atmosphereHueShift = 0.15; // Slightly blue shift
-    viewer2.scene.globe.atmosphereSaturationShift = 0.8; // More intense colors
-    
-    // Set different fog density
-    viewer1.scene.fog.density = 0.0001;
-    viewer2.scene.fog.density = 0.0005;
-    viewer2.scene.fog.minimumBrightness = 0.01;
+    // Update view labels if needed
+    const view1Label = document.getElementById('view1-label');
+    const view2Label = document.getElementById('view2-label');
+    if (view1Label) view1Label.textContent = VIEW_SETTINGS.view1.name;
+    if (view2Label) view2Label.textContent = VIEW_SETTINGS.view2.name;
 }
 
 /**

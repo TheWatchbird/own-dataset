@@ -2,7 +2,7 @@
  * Scene generation and camera positioning logic for drone view matching
  */
 
-import { UKRAINE_BOUNDS, DRONE_PARAMS, MATCH_CRITERIA } from './config.js';
+import { UKRAINE_BOUNDS, DRONE_PARAMS, MATCH_CRITERIA, VIEW_SETTINGS } from './config.js';
 import { 
     calculateOrientationToTarget,
     isPointVisibleFromCamera, 
@@ -253,6 +253,201 @@ async function findMatchingPoints(viewer1, viewer2, virtualObject) {
             finalView2Pos: { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) }
         }
     };
+}
+
+/**
+ * CameraView class to encapsulate view-specific settings and rendering
+ */
+class CameraView {
+    /**
+     * Create a new camera view
+     * @param {String} elementId - The HTML element ID for this view
+     * @param {Object} viewSettings - View-specific settings
+     * @param {Object} viewerSettings - Common viewer settings
+     */
+    constructor(elementId, viewSettings, viewerSettings) {
+        // Store settings
+        this.elementId = elementId;
+        this.settings = viewSettings;
+        
+        // Clear container
+        document.getElementById(elementId).innerHTML = '';
+        
+        // Create viewer
+        this.viewer = new Cesium.Viewer(elementId, viewerSettings);
+        
+        // Apply view-specific settings
+        this.applySettings();
+    }
+    
+    /**
+     * Apply view-specific settings from config
+     */
+    applySettings() {
+        // Apply globe settings
+        if (this.settings.globe) {
+            Object.entries(this.settings.globe).forEach(([key, value]) => {
+                this.viewer.scene.globe[key] = value;
+            });
+        }
+        
+        // Apply fog settings
+        if (this.settings.fog) {
+            Object.entries(this.settings.fog).forEach(([key, value]) => {
+                this.viewer.scene.fog[key] = value;
+            });
+        }
+        
+        // Apply imagery adjustments if provided
+        if (this.settings.imageryAdjustments) {
+            const layers = this.viewer.imageryLayers;
+            if (layers && layers.length > 0) {
+                const baseLayer = layers.get(0);
+                if (baseLayer) {
+                    const { brightness, contrast, hue, saturation, gamma } = this.settings.imageryAdjustments;
+                    baseLayer.brightness = brightness !== undefined ? brightness : 1.0;
+                    baseLayer.contrast = contrast !== undefined ? contrast : 1.0;
+                    baseLayer.hue = hue !== undefined ? hue : 0.0;
+                    baseLayer.saturation = saturation !== undefined ? saturation : 1.0;
+                    baseLayer.gamma = gamma !== undefined ? gamma : 1.0;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Set the camera position and orientation
+     * @param {Cesium.Cartesian3} position - Camera position
+     * @param {Object} orientation - Camera orientation
+     */
+    setCamera(position, orientation) {
+        this.viewer.camera.setView({
+            destination: position,
+            orientation: orientation
+        });
+    }
+    
+    /**
+     * Add an entity to the view
+     * @param {Object} entityOptions - Cesium entity options
+     * @returns {Cesium.Entity} The created entity
+     */
+    addEntity(entityOptions) {
+        return this.viewer.entities.add(entityOptions);
+    }
+    
+    /**
+     * Project a 3D point to screen coordinates
+     * @param {Cesium.Cartesian3} position - The 3D position
+     * @returns {Object} Screen coordinates
+     */
+    projectPoint(position) {
+        this.viewer.scene.render();
+        return Cesium.SceneTransforms.wgs84ToWindowCoordinates(this.viewer.scene, position);
+    }
+    
+    /**
+     * Get camera position in cartographic coordinates
+     * @returns {Cesium.Cartographic} Camera position
+     */
+    getCameraCartographic() {
+        return Cesium.Cartographic.fromCartesian(this.viewer.camera.position);
+    }
+    
+    /**
+     * Get viewer canvas dimensions
+     * @returns {Object} Width and height
+     */
+    getCanvasDimensions() {
+        return {
+            width: this.viewer.canvas.clientWidth,
+            height: this.viewer.canvas.clientHeight
+        };
+    }
+    
+    /**
+     * Force render the scene
+     */
+    render() {
+        this.viewer.scene.render();
+    }
+    
+    /**
+     * Wait for the scene to fully load (tiles, imagery)
+     * @returns {Promise} Promise that resolves when loaded
+     */
+    waitForLoad() {
+        return new Promise(resolve => {
+            if (!this.viewer || !this.viewer.scene) {
+                resolve(); // No viewer, resolve immediately
+                return;
+            }
+            
+            const scene = this.viewer.scene;
+            const globe = scene.globe;
+            
+            // Force a higher detail level for better imagery quality
+            if (globe) {
+                globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
+            }
+
+            // If scene is already loaded, resolve immediately
+            if (globe.tilesLoaded) {
+                scene.render();
+                resolve();
+                return;
+            }
+            
+            // Track resolution state to prevent multiple resolves
+            let hasResolved = false;
+            
+            // Add a post-render callback that checks if tiles are loaded
+            const removeCallback = scene.postRender.addEventListener(() => {
+                // Skip if already resolved
+                if (hasResolved) return;
+                
+                // Check the official Cesium property for tile loading status
+                if (globe.tilesLoaded) {
+                    // Prevent multiple resolutions
+                    hasResolved = true;
+                    
+                    // Clean up the event listener
+                    removeCallback();
+                    
+                    // Resolve the promise
+                    resolve();
+                }
+            });
+            
+            // Safety timeout in case the event never fires (3 seconds)
+            setTimeout(() => {
+                if (!hasResolved) {
+                    hasResolved = true;
+                    
+                    // Clean up the event listener
+                    try {
+                        removeCallback();
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                    
+                    // Force one more render and resolve
+                    scene.render();
+                    resolve();
+                }
+            }, 3000);
+        });
+    }
+    
+    /**
+     * Capture a screenshot of the current view
+     * @param {Number} quality - JPEG quality (0-1)
+     * @returns {String} Data URL of the screenshot
+     */
+    captureScreenshot(quality = 0.95) {
+        this.render();
+        return this.viewer.canvas.toDataURL('image/jpeg', quality);
+    }
 }
 
 /**
@@ -548,5 +743,6 @@ export {
     generateRandomLocation,
     generateCameraPositions,
     findMatchingPoints,
-    setupCameraViews
+    setupCameraViews,
+    CameraView
 };
