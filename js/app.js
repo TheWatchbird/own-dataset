@@ -273,6 +273,18 @@ async function generateDataset() {
         generateButton.disabled = true;
         generateButton.textContent = 'Generating...';
         
+        // Track timing for ETA calculation
+        const startTime = Date.now();
+        let lastPairTime = startTime;
+        let avgPairTime = 0;
+        
+        // Add ETA element next to progress
+        const etaElement = document.createElement('span');
+        etaElement.id = 'eta-display';
+        etaElement.style.marginLeft = '10px';
+        etaElement.textContent = 'Calculating...';
+        progressElement.appendChild(etaElement);
+        
         // Generate each pair and add to collection
         for (let i = 0; i < count; i++) {
             // Update progress
@@ -336,11 +348,125 @@ async function generateDataset() {
             
             hideLoading();
             
-            // Add current state to collection
-            await exportDataset(viewer1, viewer2, matchingPoints, currentLocation.name, true);
+            // Capture screenshots
+            // First, completely hide all entities for clean screenshots
+            const entities1 = viewer1.entities.values.slice();
+            const entities2 = viewer2.entities.values.slice();
             
-            // Additional delay between pairs
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Hide all entities
+            for (const entity of entities1) {
+                entity.show = false;
+            }
+            for (const entity of entities2) {
+                entity.show = false;
+            }
+            
+            // Also hide any primitives that might be visible
+            const primitiveCollections1 = viewer1.scene.primitives._primitives;
+            const primitiveCollections2 = viewer2.scene.primitives._primitives;
+            
+            // Save original visibility state
+            const originalPrimitiveVisibility1 = primitiveCollections1.map(p => p.show);
+            const originalPrimitiveVisibility2 = primitiveCollections2.map(p => p.show);
+            
+            // Hide all primitive collections except essential ones (like terrain)
+            for (let i = 0; i < primitiveCollections1.length; i++) {
+                const p = primitiveCollections1[i];
+                // Only hide visualization primitives, keep terrain and imagery
+                if (!(p instanceof Cesium.Globe) && 
+                    !(p instanceof Cesium.SkyBox) && 
+                    !(p instanceof Cesium.SkyAtmosphere)) {
+                    p.show = false;
+                }
+            }
+            
+            for (let i = 0; i < primitiveCollections2.length; i++) {
+                const p = primitiveCollections2[i];
+                if (!(p instanceof Cesium.Globe) && 
+                    !(p instanceof Cesium.SkyBox) && 
+                    !(p instanceof Cesium.SkyAtmosphere)) {
+                    p.show = false;
+                }
+            }
+            
+            // Force multiple renders to ensure everything is hidden
+            viewer1.scene.render();
+            viewer2.scene.render();
+            
+            // Additional render cycle to be absolutely sure
+            viewer1.scene.render();
+            viewer2.scene.render();
+            
+            // Capture clean screenshots
+            const cleanView1Image = viewer1.canvas.toDataURL('image/jpeg', 0.95);
+            const cleanView2Image = viewer2.canvas.toDataURL('image/jpeg', 0.95);
+            
+            // Restore original visibility for entities
+            for (const entity of entities1) {
+                entity.show = true;
+            }
+            for (const entity of entities2) {
+                entity.show = true;
+            }
+            
+            // Restore primitive collections visibility
+            for (let i = 0; i < primitiveCollections1.length; i++) {
+                if (i < originalPrimitiveVisibility1.length) {
+                    primitiveCollections1[i].show = originalPrimitiveVisibility1[i];
+                }
+            }
+            
+            for (let i = 0; i < primitiveCollections2.length; i++) {
+                if (i < originalPrimitiveVisibility2.length) {
+                    primitiveCollections2[i].show = originalPrimitiveVisibility2[i];
+                }
+            }
+            
+            // Force multiple renders to ensure everything is visible again
+            viewer1.scene.render();
+            viewer2.scene.render();
+            
+            // Additional render cycle to be absolutely sure
+            viewer1.scene.render();
+            viewer2.scene.render();
+            
+            // Capture debug views
+            const debugView1 = viewer1.canvas.toDataURL('image/jpeg', 0.95);
+            const debugView2 = viewer2.canvas.toDataURL('image/jpeg', 0.95);
+            
+            // Add current state to collection with all images
+            await exportDataset(
+                viewer1, 
+                viewer2, 
+                matchingPoints, 
+                currentLocation.name, 
+                true,
+                cleanView1Image,
+                cleanView2Image,
+                debugView1,
+                debugView2
+            );
+            
+            // Calculate and update ETA
+            const currentTime = Date.now();
+            const thisIterationTime = currentTime - lastPairTime;
+            lastPairTime = currentTime;
+            
+            // Update running average
+            if (i === 0) {
+                avgPairTime = thisIterationTime;
+            } else {
+                avgPairTime = (avgPairTime * i + thisIterationTime) / (i + 1);
+            }
+            
+            // Calculate and display ETA
+            const remainingPairs = count - (i + 1);
+            const estimatedRemainingSeconds = Math.round(remainingPairs * avgPairTime / 1000);
+            const etaMinutes = Math.floor(estimatedRemainingSeconds / 60);
+            const etaSeconds = estimatedRemainingSeconds % 60;
+            
+            // Update ETA display
+            etaElement.textContent = `ETA: ${etaMinutes}m ${etaSeconds}s`;
         }
         
         // All done - export collection
@@ -368,7 +494,7 @@ async function generateDataset() {
 }
 
 /**
- * Wait for a Cesium scene to be fully loaded using a simpler approach
+ * Wait for a Cesium scene to be fully loaded using proper event-based detection
  * @param {Cesium.Viewer} viewer - The Cesium viewer to check
  * @returns {Promise} - Promise that resolves when the scene is loaded
  */
@@ -380,43 +506,59 @@ function waitForSceneToLoad(viewer) {
         }
         
         const scene = viewer.scene;
+        const globe = scene.globe;
         
         // Force a higher detail level for better imagery quality
-        if (scene.globe) {
-            scene.globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
+        if (globe) {
+            globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
+        }
+
+        // If scene is already loaded, resolve immediately
+        if (globe.tilesLoaded) {
+            scene.render();
+            resolve();
+            return;
         }
         
-        // Initial render to kick off loading
-        scene.render();
-        
-        // Track the state to prevent multiple resolves
+        // Track resolution state to prevent multiple resolves
         let hasResolved = false;
         
-        // Simple timeout-based approach to allow imagery to load
-        // This avoids potential stack overflow issues with event listeners
-        function waitForLoading() {
-            // Render to progress loading
-            scene.render();
+        // Add a post-render callback that checks if tiles are loaded
+        // This avoids event recursion while still being event-based
+        const removeCallback = scene.postRender.addEventListener(() => {
+            // Skip if already resolved
+            if (hasResolved) return;
             
-            // Check if we're done
-            if (hasResolved) {
-                return;
+            // Check the official Cesium property for tile loading status
+            if (globe.tilesLoaded) {
+                // Prevent multiple resolutions
+                hasResolved = true;
+                
+                // Clean up the event listener
+                removeCallback();
+                
+                // Resolve the promise
+                resolve();
             }
-            
-            // Set a flag so we can check it in our timeout handler
-            hasResolved = true;
-            
-            // Short timeout to allow additional imagery to load
-            setTimeout(() => {
-                // Simple final render sequence
-                scene.render();
+        });
+        
+        // Safety timeout in case the event never fires (3 seconds)
+        setTimeout(() => {
+            if (!hasResolved) {
+                hasResolved = true;
+                
+                // Clean up the event listener
+                try {
+                    removeCallback();
+                } catch (e) {
+                    // Ignore errors
+                }
+                
+                // Force one more render and resolve
                 scene.render();
                 resolve();
-            }, 1500);
-        }
-        
-        // Start waiting
-        waitForLoading();
+            }
+        }, 3000);
     });
 }
 

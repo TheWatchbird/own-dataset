@@ -12,10 +12,24 @@ let datasetCollection = [];
  * @param {Array} matchingPoints - Array of matching points
  * @param {String} locationName - Name of the current location
  * @param {Boolean} addToCollection - Whether to add to collection rather than export directly
+ * @param {String} cleanView1Image - Clean screenshot of view1 without entities
+ * @param {String} cleanView2Image - Clean screenshot of view2 without entities
+ * @param {String} debugView1 - Debug screenshot of view1 with entities
+ * @param {String} debugView2 - Debug screenshot of view2 with entities
  * @returns {Promise} - Promise resolving when export is complete
  */
-function exportDataset(viewer1, viewer2, matchingPoints, locationName, addToCollection = false) {
-    return new Promise((resolve, reject) => {
+function exportDataset(
+    viewer1, 
+    viewer2, 
+    matchingPoints, 
+    locationName, 
+    addToCollection = false,
+    cleanView1Image = null,
+    cleanView2Image = null,
+    debugView1 = null,
+    debugView2 = null
+) {
+    return new Promise(async (resolve, reject) => {
         try {
             // Get camera positions and orientations
             const camera1 = viewer1.camera;
@@ -70,54 +84,125 @@ function exportDataset(viewer1, viewer2, matchingPoints, locationName, addToColl
                 }))
             };
             
-            // Add images from both views (screenshots)
+            // Add the provided images - either externally provided or captured now
             try {
-                // Force additional render cycles to ensure content is visible
-                viewer1.scene.render();
-                viewer2.scene.render();
-                
-                // Use a more reliable method to capture the canvas
-                // Get the raw canvas elements
-                const canvas1 = viewer1.canvas;
-                const canvas2 = viewer2.canvas;
-                
-                // Create a new canvas for each view to ensure proper capture
-                const captureCanvas1 = document.createElement('canvas');
-                const captureCanvas2 = document.createElement('canvas');
-                
-                // Set the capture canvas size to match the viewer canvas
-                captureCanvas1.width = canvas1.width;
-                captureCanvas1.height = canvas1.height;
-                captureCanvas2.width = canvas2.width;
-                captureCanvas2.height = canvas2.height;
-                
-                // Get the 2D context for drawing
-                const ctx1 = captureCanvas1.getContext('2d');
-                const ctx2 = captureCanvas2.getContext('2d');
-                
-                // Draw the viewer canvas onto the capture canvas
-                ctx1.drawImage(canvas1, 0, 0);
-                ctx2.drawImage(canvas2, 0, 0);
-                
-                // Get the data URLs from the capture canvases
-                const view1Image = captureCanvas1.toDataURL('image/jpeg', 0.95);  // Higher quality
-                const view2Image = captureCanvas2.toDataURL('image/jpeg', 0.95);
-                
-                // Check if the images are valid (not empty/black)
-                if (view1Image.length < 1000 || view2Image.length < 1000) {
-                    throw new Error("Captured images appear to be empty or invalid");
+                // If external images are provided, use them
+                if (cleanView1Image && cleanView2Image && debugView1 && debugView2) {
+                    // Create a combined debug image
+                    const debugCombined = await createCombinedImage(debugView1, debugView2);
+                    
+                    // Store only clean images and combined debug image
+                    dataset.metadata.images = {
+                        view1_clean: cleanView1Image,
+                        view2_clean: cleanView2Image,
+                        combined_debug: debugCombined
+                    };
+                } else {
+                    // Fallback to standard screenshot capture if not provided
+                    // We need to capture both clean and debug versions
+                    
+                    // First, completely hide all entities for clean screenshots
+                    const entities1 = viewer1.entities.values.slice();
+                    const entities2 = viewer2.entities.values.slice();
+                    
+                    // Hide all entities
+                    for (const entity of entities1) {
+                        entity.show = false;
+                    }
+                    for (const entity of entities2) {
+                        entity.show = false;
+                    }
+                    
+                    // Also hide any primitives that might be visible
+                    const primitiveCollections1 = viewer1.scene.primitives._primitives;
+                    const primitiveCollections2 = viewer2.scene.primitives._primitives;
+                    
+                    // Save original visibility state
+                    const originalPrimitiveVisibility1 = primitiveCollections1.map(p => p.show);
+                    const originalPrimitiveVisibility2 = primitiveCollections2.map(p => p.show);
+                    
+                    // Hide all primitive collections except essential ones (like terrain)
+                    for (let i = 0; i < primitiveCollections1.length; i++) {
+                        const p = primitiveCollections1[i];
+                        // Only hide visualization primitives, keep terrain and imagery
+                        if (!(p instanceof Cesium.Globe) && 
+                            !(p instanceof Cesium.SkyBox) && 
+                            !(p instanceof Cesium.SkyAtmosphere)) {
+                            p.show = false;
+                        }
+                    }
+                    
+                    for (let i = 0; i < primitiveCollections2.length; i++) {
+                        const p = primitiveCollections2[i];
+                        if (!(p instanceof Cesium.Globe) && 
+                            !(p instanceof Cesium.SkyBox) && 
+                            !(p instanceof Cesium.SkyAtmosphere)) {
+                            p.show = false;
+                        }
+                    }
+                    
+                    // Force multiple renders to ensure everything is hidden
+                    viewer1.scene.render();
+                    viewer2.scene.render();
+                    
+                    // Additional render cycle to be absolutely sure
+                    viewer1.scene.render();
+                    viewer2.scene.render();
+                    
+                    // Capture clean screenshots
+                    const cleanView1Image = viewer1.canvas.toDataURL('image/jpeg', 0.95);
+                    const cleanView2Image = viewer2.canvas.toDataURL('image/jpeg', 0.95);
+                    
+                    // Restore original visibility for entities
+                    for (const entity of entities1) {
+                        entity.show = true;
+                    }
+                    for (const entity of entities2) {
+                        entity.show = true;
+                    }
+                    
+                    // Restore primitive collections visibility
+                    for (let i = 0; i < primitiveCollections1.length; i++) {
+                        if (i < originalPrimitiveVisibility1.length) {
+                            primitiveCollections1[i].show = originalPrimitiveVisibility1[i];
+                        }
+                    }
+                    
+                    for (let i = 0; i < primitiveCollections2.length; i++) {
+                        if (i < originalPrimitiveVisibility2.length) {
+                            primitiveCollections2[i].show = originalPrimitiveVisibility2[i];
+                        }
+                    }
+                    
+                    // Force multiple renders to ensure everything is visible again
+                    viewer1.scene.render();
+                    viewer2.scene.render();
+                    
+                    // Additional render cycle to be absolutely sure
+                    viewer1.scene.render();
+                    viewer2.scene.render();
+                    
+                    // Capture debug views
+                    const debugView1 = viewer1.canvas.toDataURL('image/jpeg', 0.95);
+                    const debugView2 = viewer2.canvas.toDataURL('image/jpeg', 0.95);
+                    
+                    // Create combined debug image
+                    const debugCombined = await createCombinedImage(debugView1, debugView2);
+                    
+                    // Check if the images are valid
+                    if (cleanView1Image.length < 1000 || cleanView2Image.length < 1000) {
+                        throw new Error("Captured images appear to be empty or invalid");
+                    }
+                    
+                    // Store only clean images and combined debug image
+                    dataset.metadata.images = {
+                        view1_clean: cleanView1Image,
+                        view2_clean: cleanView2Image,
+                        combined_debug: debugCombined
+                    };
                 }
-                
-                dataset.metadata.images = {
-                    view1: view1Image,
-                    view2: view2Image
-                };
-                
-                // Clean up
-                captureCanvas1.remove();
-                captureCanvas2.remove();
             } catch (err) {
-                console.error("Error capturing view images:", err);
+                console.error("Error processing images:", err);
                 // Add error info to the dataset
                 dataset.metadata.imageError = err.message;
             }
@@ -177,11 +262,13 @@ function exportDatasetCollection() {
                     // Create a deep copy without the images
                     const cleanDataset = JSON.parse(JSON.stringify(dataset));
                     
-                    // Replace image paths with references to the image files
+                    // Replace image paths with references to the image files in the new folder structure
                     if (cleanDataset.metadata.images) {
+                        const locationStr = dataset.metadata.location.replace(/[^0-9.,]/g, '');
                         cleanDataset.metadata.images = {
-                            view1: `images/pair_${index + 1}_view1.jpg`,
-                            view2: `images/pair_${index + 1}_view2.jpg`
+                            view1: `images/pair_${index + 1}_${locationStr}/view1.jpg`,
+                            view2: `images/pair_${index + 1}_${locationStr}/view2.jpg`,
+                            debug: `images/pair_${index + 1}_${locationStr}/debug.jpg`
                         };
                     }
                     
@@ -202,21 +289,56 @@ function exportDatasetCollection() {
             datasetCollection.forEach((dataset, index) => {
                 if (dataset.metadata.images) {
                     try {
-                        // Extract base64 data (remove the data:image/jpeg;base64, prefix)
+                        // Create directories for each pair with GPS coordinates in the name
+                    const locationStr = dataset.metadata.location.replace(/[^0-9.,]/g, '');
+                    const pairFolder = imagesFolder.folder(`pair_${index + 1}_${locationStr}`);
+                    
+                    // Add different image types based on what's available
+                    if (dataset.metadata.images.view1_clean) {
+                        // New format with clean images + combined debug
+                        const clean1Data = dataset.metadata.images.view1_clean.split(',')[1];
+                        const clean2Data = dataset.metadata.images.view2_clean.split(',')[1];
+                        const combinedDebugData = dataset.metadata.images.combined_debug.split(',')[1];
+                        
+                        // Add clean images and combined debug image to the pair folder
+                        pairFolder.file(`view1.jpg`, clean1Data, {base64: true});
+                        pairFolder.file(`view2.jpg`, clean2Data, {base64: true});
+                        pairFolder.file(`debug.jpg`, combinedDebugData, {base64: true});
+                    } else {
+                        // Legacy format with just view1/view2
                         const view1Data = dataset.metadata.images.view1.split(',')[1];
                         const view2Data = dataset.metadata.images.view2.split(',')[1];
                         
-                        // Add images to the zip
-                        imagesFolder.file(`pair_${index + 1}_view1.jpg`, view1Data, {base64: true});
-                        imagesFolder.file(`pair_${index + 1}_view2.jpg`, view2Data, {base64: true});
+                        // Add basic images
+                        pairFolder.file(`view1.jpg`, view1Data, {base64: true});
+                        pairFolder.file(`view2.jpg`, view2Data, {base64: true});
+                    }
                         
-                        // Add a combined side-by-side view for easy comparison
-                        // (This will be generated when viewing the dataset)
-                        const note = imagesFolder.file(`pair_${index + 1}_README.txt`, 
+                        // Add a JSON file with pair metadata and points
+                        const pairData = {
+                            metadata: {
+                                index: index + 1,
+                                location: dataset.metadata.location,
+                                timestamp: dataset.metadata.timestamp,
+                                distance: dataset.metadata.distance,
+                                cameras: dataset.metadata.cameras
+                            },
+                            matchingPoints: dataset.matchingPoints
+                        };
+                        
+                        pairFolder.file(`metadata.json`, JSON.stringify(pairData, null, 2));
+                        
+                        // Add a simple text README with GPS coordinates
+                        pairFolder.file(`README.txt`, 
                             `Pair ${index + 1}\n` + 
-                            `Location: ${dataset.metadata.location}\n` +
+                            `GPS Coordinates: ${dataset.metadata.location}\n` +
                             `Timestamp: ${dataset.metadata.timestamp}\n` +
-                            `Distance between cameras: ${dataset.metadata.distance}m\n`
+                            `Distance between cameras: ${dataset.metadata.distance}m\n` +
+                            `Files:\n` +
+                            `- view1.jpg: Clean image from first view (no markers or entities)\n` +
+                            `- view2.jpg: Clean image from second view (no markers or entities)\n` +
+                            `- debug.jpg: Combined side-by-side debug view with markers\n` +
+                            `- metadata.json: Point correspondence and camera data\n`
                         );
                     } catch (error) {
                         console.warn(`Error processing images for pair ${index + 1}:`, error);
@@ -224,17 +346,26 @@ function exportDatasetCollection() {
                 }
             });
             
-            // Add a simple README file
+            // Add a detailed README file
             zip.file("README.txt", 
                 `Drone View Matching Dataset\n` +
                 `Generated: ${new Date().toISOString()}\n` +
                 `Total Pairs: ${datasetCollection.length}\n\n` +
                 `Contents:\n` +
                 `- dataset.json: Contains all metadata and point correspondence information\n` +
-                `- images/: Contains all view images as JPEG files\n` +
-                `  - pair_N_view1.jpg: First perspective of pair N\n` +
-                `  - pair_N_view2.jpg: Second perspective of pair N\n\n` +
-                `Each pair contains a matching point visible in both views.`
+                `- images/: Contains folders for each image pair\n` +
+                `  - pair_N_[coordinates]: Folder for each pair with its GPS coordinates\n` +
+                `    - view1.jpg: Clean image from first camera perspective\n` +
+                `    - view2.jpg: Clean image from second camera perspective\n` +
+                `    - debug.jpg: Combined debug view with visible markers\n` +
+                `    - metadata.json: Camera positions and point correspondence data\n\n` +
+                `Each pair contains a 3D point projected onto both views, with clean images\n` +
+                `having no visible markers, and the debug image showing the matched point.\n\n` +
+                `Dataset Structure:\n` +
+                `- Points are placed at real geographic coordinates in Ukraine\n` +
+                `- Camera positions simulate drone flights at different altitudes and angles\n` +
+                `- Camera distance ranges from 100-400m\n` +
+                `- Images are captured with different viewing angles of 30-120 degrees apart\n`
             );
             
             // Generate the zip file
@@ -280,10 +411,86 @@ function getDatasetCollectionSize() {
     return datasetCollection.length;
 }
 
+/**
+ * Create a single combined image from two images for debug view
+ * @param {String} image1 - First image data URL
+ * @param {String} image2 - Second image data URL
+ * @returns {Promise<String>} - Promise resolving to the combined image data URL
+ */
+function createCombinedImage(image1, image2) {
+    return new Promise((resolve, reject) => {
+        // Create two image elements to load the data URLs
+        const img1 = new Image();
+        const img2 = new Image();
+        
+        // Count loaded images
+        let loadedCount = 0;
+        
+        // Function to handle image loading
+        function handleImageLoad() {
+            loadedCount++;
+            
+            // Once both images are loaded, combine them
+            if (loadedCount === 2) {
+                // Create a canvas for the combined image
+                const canvas = document.createElement('canvas');
+                
+                // Use the sum of the widths and the max height
+                canvas.width = img1.width + img2.width;
+                canvas.height = Math.max(img1.height, img2.height);
+                
+                // Get the context for drawing
+                const ctx = canvas.getContext('2d');
+                
+                // Fill with black background
+                ctx.fillStyle = 'black';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw the images side by side
+                ctx.drawImage(img1, 0, 0);
+                ctx.drawImage(img2, img1.width, 0);
+                
+                // Add a dividing line
+                ctx.beginPath();
+                ctx.moveTo(img1.width, 0);
+                ctx.lineTo(img1.width, canvas.height);
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Add labels
+                ctx.font = '20px Arial';
+                ctx.fillStyle = 'white';
+                ctx.fillText('View 1', 10, 30);
+                ctx.fillText('View 2', img1.width + 10, 30);
+                
+                // Get the data URL and resolve the promise
+                resolve(canvas.toDataURL('image/jpeg', 0.9));
+            }
+        }
+        
+        // Set up error handling
+        function handleError() {
+            reject(new Error('Failed to load images for combining'));
+        }
+        
+        // Set up event handlers
+        img1.onload = handleImageLoad;
+        img1.onerror = handleError;
+        img2.onload = handleImageLoad;
+        img2.onerror = handleError;
+        
+        // Set the sources to start loading
+        img1.src = image1;
+        img2.src = image2;
+    });
+}
+
 // Export functions
 export { 
     exportDataset, 
     exportDatasetCollection, 
     clearDatasetCollection, 
-    getDatasetCollectionSize 
+    getDatasetCollectionSize,
+    createCombinedImage
 };

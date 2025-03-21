@@ -31,8 +31,9 @@ function generateRandomLocation() {
     const lon = UKRAINE_BOUNDS.minLon + Math.random() * (UKRAINE_BOUNDS.maxLon - UKRAINE_BOUNDS.minLon);
     const height = 0; // Ground level
     
+    // Use actual GPS coordinates instead of "Random Location" text
     return {
-        name: "Random Location",
+        name: `${lat.toFixed(6)},${lon.toFixed(6)}`,
         lat,
         lon,
         height
