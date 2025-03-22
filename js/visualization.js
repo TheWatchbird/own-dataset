@@ -13,11 +13,8 @@ let isInitialized = false;
 function initCanvas() {
     console.log('Initializing canvas...');
     
-    // Remove any existing canvas
-    const existingCanvas = document.getElementById('overlay-canvas');
-    if (existingCanvas) {
-        existingCanvas.remove();
-    }
+    // Clean up any existing canvas and listeners
+    cleanupCanvas();
     
     // Create new canvas
     canvas = document.createElement('canvas');
@@ -270,11 +267,28 @@ function hideLoading() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
+/**
+ * Cleanup canvas and remove event listeners
+ */
+function cleanupCanvas() {
+    // Remove resize event listener
+    window.removeEventListener('resize', resizeCanvas);
+    
+    // Remove any existing canvas
+    const existingCanvas = document.getElementById('overlay-canvas');
+    if (existingCanvas) {
+        existingCanvas.remove();
+    }
+    
+    isInitialized = false;
+}
+
 // Export visualization functions
 export {
     initCanvas,
     drawMatchingLines,
     showLoading,
     showError,
-    hideLoading
+    hideLoading,
+    cleanupCanvas
 };

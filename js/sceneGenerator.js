@@ -390,6 +390,20 @@ class CameraView {
     }
     
     /**
+     * Properly destroy the viewer and clean up resources
+     */
+    destroy() {
+        if (this.viewer) {
+            try {
+                this.viewer.destroy();
+                this.viewer = null;
+            } catch (e) {
+                console.error("Error destroying viewer:", e);
+            }
+        }
+    }
+    
+    /**
      * Set the camera position and orientation
      * @param {Cesium.Cartesian3} position - Camera position
      * @param {Object} orientation - Camera orientation
@@ -467,49 +481,49 @@ class CameraView {
 
             // If scene is already loaded, resolve immediately
             if (globe.tilesLoaded) {
-                scene.render();
                 resolve();
                 return;
             }
             
-            // Track resolution state to prevent multiple resolves
+            // Track if we've resolved yet
             let hasResolved = false;
+            let animationFrameId = null;
             
-            // Add a post-render callback that checks if tiles are loaded
-            const removeCallback = scene.postRender.addEventListener(() => {
-                // Skip if already resolved
+            // Use requestAnimationFrame to check tile loading status
+            // This avoids potential recursion issues with scene.render()
+            const checkTilesLoaded = () => {
+                // If already resolved, stop checking
                 if (hasResolved) return;
                 
-                // Check the official Cesium property for tile loading status
+                // Check if tiles are loaded
                 if (globe.tilesLoaded) {
-                    // Prevent multiple resolutions
                     hasResolved = true;
-                    
-                    // Clean up the event listener
-                    removeCallback();
-                    
-                    // Resolve the promise
+                    cancelAnimationFrame(animationFrameId);
                     resolve();
+                    return;
                 }
-            });
+                
+                // Continue checking in next animation frame
+                animationFrameId = requestAnimationFrame(checkTilesLoaded);
+            };
             
-            // Safety timeout in case the event never fires (3 seconds)
-            setTimeout(() => {
-                if (!hasResolved) {
-                    hasResolved = true;
-                    
-                    // Clean up the event listener
-                    try {
-                        removeCallback();
-                    } catch (e) {
-                        // Ignore errors
+            // Start the checking process
+            animationFrameId = requestAnimationFrame(checkTilesLoaded);
+            
+            // Also listen to the tileLoadProgressEvent as a backup
+            if (globe.tileLoadProgressEvent) {
+                const removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
+                    if (!hasResolved && globe.tilesLoaded) {
+                        hasResolved = true;
+                        cancelAnimationFrame(animationFrameId);
+                        removeListener();
+                        resolve();
                     }
-                    
-                    // Force one more render and resolve
-                    scene.render();
-                    resolve();
-                }
-            }, 3000);
+                });
+            }
+            
+            // Force an initial render to kick off tile loading
+            scene.render();
         });
     }
     

@@ -4,7 +4,7 @@
 
 import { CESIUM_TOKEN, VIEW_SETTINGS, VIEWER_SETTINGS1, VIEWER_SETTINGS2 } from './config.js';
 import { setupCameraViews, generateRandomLocation, CameraView } from './sceneGenerator.js';
-import { drawMatchingLines, showLoading, showError, hideLoading } from './visualization.js';
+import { drawMatchingLines, showLoading, showError, hideLoading, cleanupCanvas } from './visualization.js';
 import { 
     exportDataset, 
     exportDatasetCollection, 
@@ -89,6 +89,25 @@ function initApp() {
  * using the CameraView class for better encapsulation
  */
 function createViewers() {
+    // Destroy existing viewers if they exist
+    if (viewer1) {
+        try {
+            viewer1.destroy();
+        } catch (e) {
+            console.error("Error destroying viewer1:", e);
+        }
+        viewer1 = null;
+    }
+    
+    if (viewer2) {
+        try {
+            viewer2.destroy();
+        } catch (e) {
+            console.error("Error destroying viewer2:", e);
+        }
+        viewer2 = null;
+    }
+    
     // Create camera view instances for each view
     const cameraView1 = new CameraView('view1', VIEW_SETTINGS.view1, VIEWER_SETTINGS1);
     const cameraView2 = new CameraView('view2', VIEW_SETTINGS.view2, VIEWER_SETTINGS2);
@@ -109,7 +128,8 @@ function createViewers() {
  */
 async function generateNewViews() {
     try {
-        // Generate new views
+        // Clean up previous canvas if any
+        cleanupCanvas();
         
         // Clear previous matching points
         matchingPoints = [];
@@ -301,19 +321,23 @@ async function generateDataset() {
             // Reset Cesium viewers periodically to prevent memory issues
             if (i > 0 && i % 50 === 0) {
                 // Destroy and recreate viewers
-                viewer1.destroy();
-                viewer2.destroy();
-                
-                // Force garbage collection if possible
-                if (window.gc) {
-                    window.gc();
-                } else {
-                    // Try to trigger cleanup manually
-                    const arr = [];
-                    for (let i = 0; i < 1000000; i++) {
-                        arr.push([]);
-                    }
+                if (viewer1) {
+                    viewer1.destroy();
+                    viewer1 = null;
                 }
+                if (viewer2) {
+                    viewer2.destroy();
+                    viewer2 = null;
+                }
+                
+                // Clean up visualization canvas
+                cleanupCanvas();
+                
+                // Clear any other potential references
+                matchingPoints = [];
+                
+                // Allow time for garbage collection
+                await new Promise(resolve => setTimeout(resolve, 100));
                 
                 // Recreate viewers
                 createViewers();
@@ -348,31 +372,48 @@ async function generateDataset() {
                 // Show feedback about what's happening
                 showLoading('Enhancing image quality...');
                 
-                // Multiple renders with a shorter pause between them
-                const totalRenders = 3; 
-                let renderCount = 0;
+                // Set higher quality imagery
+                viewer1.scene.globe.maximumScreenSpaceError = 0.5; // Very high detail
+                viewer2.scene.globe.maximumScreenSpaceError = 0.5;
                 
-                function performRender() {
-                    if (renderCount >= totalRenders) {
-                        // Wait a moment to ensure GPU has completed all work
-                        setTimeout(resolve, 500);
-                        return;
+                // Force imagery to load at highest available resolution
+                viewer1.scene.globe.preloadSiblings = true;
+                viewer2.scene.globe.preloadSiblings = true;
+                
+                // Initial render to trigger loading
+                viewer1.scene.render();
+                viewer2.scene.render();
+                
+                // Counter to track number of frames where tilesLoaded is true
+                // We want to make sure tiles stay loaded for multiple frames
+                let stableFrameCount = 0;
+                const requiredStableFrames = 10;
+                
+                // To avoid recursion, we'll use requestAnimationFrame instead of directly calling render
+                let animationFrameId = null;
+                
+                // Function to check tiles loaded status
+                const checkTilesLoaded = () => {
+                    if (viewer1.scene.globe.tilesLoaded && viewer2.scene.globe.tilesLoaded) {
+                        stableFrameCount++;
+                        showLoading(`Enhancing image quality (${stableFrameCount}/${requiredStableFrames})`);
+                        
+                        if (stableFrameCount >= requiredStableFrames) {
+                            // Resolve the promise
+                            resolve();
+                            return;
+                        }
+                    } else {
+                        // Reset counter if tiles aren't loaded
+                        stableFrameCount = 0;
                     }
                     
-                    // Force renders
-                    viewer1.scene.render();
-                    viewer2.scene.render();
-                    renderCount++;
-                    
-                    // Update loading message with progress
-                    showLoading(`Enhancing image quality (${renderCount}/${totalRenders})`);
-                    
-                    // Wait before next render - shorter pause
-                    setTimeout(performRender, 400);
-                }
+                    // Continue checking in the next frame
+                    animationFrameId = requestAnimationFrame(checkTilesLoaded);
+                };
                 
-                // Start the render sequence
-                performRender();
+                // Start the checking process
+                animationFrameId = requestAnimationFrame(checkTilesLoaded);
             });
             
             hideLoading();
@@ -561,50 +602,46 @@ function waitForSceneToLoad(viewer) {
 
         // If scene is already loaded, resolve immediately
         if (globe.tilesLoaded) {
-            scene.render();
             resolve();
             return;
         }
         
-        // Track resolution state to prevent multiple resolves
+        // Track if we've resolved yet
         let hasResolved = false;
+        let animationFrameId = null;
         
-        // Add a post-render callback that checks if tiles are loaded
-        // This avoids event recursion while still being event-based
-        const removeCallback = scene.postRender.addEventListener(() => {
-            // Skip if already resolved
+        // Use requestAnimationFrame to check tile loading status
+        // This avoids potential recursion issues with scene.render()
+        const checkTilesLoaded = () => {
+            // If already resolved, stop checking
             if (hasResolved) return;
             
-            // Check the official Cesium property for tile loading status
+            // Check if tiles are loaded
             if (globe.tilesLoaded) {
-                // Prevent multiple resolutions
                 hasResolved = true;
-                
-                // Clean up the event listener
-                removeCallback();
-                
-                // Resolve the promise
+                cancelAnimationFrame(animationFrameId);
                 resolve();
+                return;
             }
-        });
+            
+            // Continue checking in next animation frame
+            animationFrameId = requestAnimationFrame(checkTilesLoaded);
+        };
         
-        // Safety timeout in case the event never fires (3 seconds)
-        setTimeout(() => {
-            if (!hasResolved) {
-                hasResolved = true;
-                
-                // Clean up the event listener
-                try {
-                    removeCallback();
-                } catch (e) {
-                    // Ignore errors
+        // Start the checking process
+        animationFrameId = requestAnimationFrame(checkTilesLoaded);
+        
+        // Also listen to the tileLoadProgressEvent as a backup
+        if (globe.tileLoadProgressEvent) {
+            const removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
+                if (!hasResolved && globe.tilesLoaded) {
+                    hasResolved = true;
+                    cancelAnimationFrame(animationFrameId);
+                    removeListener();
+                    resolve();
                 }
-                
-                // Force one more render and resolve
-                scene.render();
-                resolve();
-            }
-        }, 3000);
+            });
+        }
     });
 }
 
