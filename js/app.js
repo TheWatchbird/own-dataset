@@ -298,7 +298,28 @@ async function generateDataset() {
             // Update progress
             progressCountElement.textContent = i;
             
-            // Generate new views
+            // Reset Cesium viewers periodically to prevent memory issues
+            if (i > 0 && i % 50 === 0) {
+                // Destroy and recreate viewers
+                viewer1.destroy();
+                viewer2.destroy();
+                
+                // Force garbage collection if possible
+                if (window.gc) {
+                    window.gc();
+                } else {
+                    // Try to trigger cleanup manually
+                    const arr = [];
+                    for (let i = 0; i < 1000000; i++) {
+                        arr.push([]);
+                    }
+                }
+                
+                // Recreate viewers
+                createViewers();
+            }
+            
+            // First generate the next view location - this gives time for rendering
             await generateNewViews();
             
             // Wait for both scenes to be fully loaded and rendered before capturing
@@ -328,13 +349,13 @@ async function generateDataset() {
                 showLoading('Enhancing image quality...');
                 
                 // Multiple renders with a shorter pause between them
-                const totalRenders = 3; // Reduced from 5 to 3
+                const totalRenders = 3; 
                 let renderCount = 0;
                 
                 function performRender() {
                     if (renderCount >= totalRenders) {
                         // Wait a moment to ensure GPU has completed all work
-                        setTimeout(resolve, 500); // Reduced from 1000ms to 500ms
+                        setTimeout(resolve, 500);
                         return;
                     }
                     
@@ -347,7 +368,7 @@ async function generateDataset() {
                     showLoading(`Enhancing image quality (${renderCount}/${totalRenders})`);
                     
                     // Wait before next render - shorter pause
-                    setTimeout(performRender, 400); // Reduced from 800ms to 400ms
+                    setTimeout(performRender, 400);
                 }
                 
                 // Start the render sequence
@@ -357,6 +378,8 @@ async function generateDataset() {
             hideLoading();
             
             // Capture screenshots
+            showLoading('Capturing screenshots...');
+            
             // First, completely hide all entities for clean screenshots
             const entities1 = viewer1.entities.values.slice();
             const entities2 = viewer2.entities.values.slice();
@@ -484,6 +507,13 @@ async function generateDataset() {
             
             // Update ETA display
             etaElement.textContent = `ETA: ${etaMinutes}m ${etaSeconds}s`;
+            
+            // Pre-generate the next location if not the last iteration
+            if (i < count - 1 && i % 50 !== 49) {  // Skip if we're about to recreate viewers
+                showLoading('Preparing next location...');
+                currentLocation = await generateRandomLocation();
+                hideLoading();
+            }
         }
         
         // All done - no need to export the collection, as we've saved each pair individually
