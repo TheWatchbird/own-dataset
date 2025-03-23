@@ -2,7 +2,7 @@
  * Scene generation and camera positioning logic for drone view matching
  */
 
-import { UKRAINE_BOUNDS, DRONE_PARAMS, MATCH_CRITERIA, VIEW_SETTINGS } from './config.js';
+import { GLOBAL_REGIONS, DRONE_PARAMS, MATCH_CRITERIA, VIEW_SETTINGS } from './config.js';
 import { 
     calculateOrientationToTarget,
     isPointVisibleFromCamera, 
@@ -12,7 +12,9 @@ import {
 
 /**
  * Config defaults (for reference, adjust in config.js)
- * UKRAINE_BOUNDS = { minLat: 44.0, maxLat: 52.5, minLon: 22.0, maxLon: 41.0 }
+ * GLOBAL_REGIONS = Array of regions with bounds:
+ * { name: "Region Name", minLat: val, maxLat: val, minLon: val, maxLon: val }
+ * 
  * DRONE_PARAMS = {
  *   heightRange: [50, 500], // meters above ground
  *   distanceRange: [100, 1000], // meters
@@ -30,7 +32,7 @@ import {
  */
 async function findNearestBuilding(lat, lon) {
     let radius = 1000; // Start with 1000m radius
-    const maxRadius = 30000; // Limit expansion to 30km
+    const maxRadius = 10000; // Limit expansion to 10km
 
     while (radius <= maxRadius) {
         const overpassQuery = `
@@ -60,26 +62,53 @@ async function findNearestBuilding(lat, lon) {
         }
 
         // Increase search radius for next attempt
-        radius += 1000; // Increase by 1km per attempt
+        radius += 2000; // Increase by 1km per attempt
     }
 
     throw new Error("No buildings found after expanding search.");
 }
 
 /**
- * Generate a random point within Ukraine's bounds
+ * Generate a random point within one of the global regions
  * @returns {Promise<Object>} - Location with lat, lon, and ground height
  */
 async function generateRandomLocation() {
+    // Status element for user feedback
+    let statusElement = document.getElementById('location-status');
+    if (!statusElement) {
+        statusElement = document.createElement('div');
+        statusElement.id = 'location-status';
+        statusElement.style.position = 'absolute';
+        statusElement.style.bottom = '10px';
+        statusElement.style.left = '10px';
+        statusElement.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        statusElement.style.color = 'white';
+        statusElement.style.padding = '5px 10px';
+        statusElement.style.borderRadius = '5px';
+        statusElement.style.zIndex = '1000';
+        document.body.appendChild(statusElement);
+    }
+
     while (true) {
-        const lat = UKRAINE_BOUNDS.minLat + Math.random() * (UKRAINE_BOUNDS.maxLat - UKRAINE_BOUNDS.minLat);
-        const lon = UKRAINE_BOUNDS.minLon + Math.random() * (UKRAINE_BOUNDS.maxLon - UKRAINE_BOUNDS.minLon);
+        // Select a random region from the GLOBAL_REGIONS array
+        const region = GLOBAL_REGIONS[Math.floor(Math.random() * GLOBAL_REGIONS.length)];
+        
+        // Generate random coordinates within the selected region
+        const lat = region.minLat + Math.random() * (region.maxLat - region.minLat);
+        const lon = region.minLon + Math.random() * (region.maxLon - region.minLon);
+
+        statusElement.textContent = `Finding location in: ${region.name}`;
+        console.log(`Trying location in region: ${region.name} (${lat.toFixed(4)}, ${lon.toFixed(4)})`);
 
         try {
+            statusElement.textContent = `Searching for buildings near ${lat.toFixed(4)}, ${lon.toFixed(4)} in ${region.name}...`;
             const buildingLocation = await findNearestBuilding(lat, lon);
+            
+            statusElement.textContent = `Found building in ${region.name}!`;
             
             // 50% chance to apply random shift
             if (Math.random() < 0.5) {
+                statusElement.textContent = `Applying random shift in ${region.name}...`;
                 // Add random shift within 200m
                 // Convert 200m to approximate degrees (1 degree ≈ 111km at equator)
                 const maxShiftDegrees = 200 / 111000; // 200m in degrees
@@ -93,11 +122,14 @@ async function generateRandomLocation() {
                 const shiftedLat = buildingLocation.lat + shiftDistance * Math.sin(shiftAngle);
                 const shiftedLon = buildingLocation.lon + shiftDistance * Math.cos(shiftAngle) / Math.cos(buildingLocation.lat * Math.PI / 180);
                 
+                // Keep the original name format for metadata compatibility
                 return {
                     name: `${shiftedLat.toFixed(6)},${shiftedLon.toFixed(6)}`,
                     lat: shiftedLat,
                     lon: shiftedLon,
-                    height: 0
+                    height: 0,
+                    // Add region info but don't modify the name property that might be used elsewhere
+                    region: region.name
                 };
             } else {
                 // Return exact building location without shift
@@ -105,11 +137,14 @@ async function generateRandomLocation() {
                     name: `${buildingLocation.lat.toFixed(6)},${buildingLocation.lon.toFixed(6)}`,
                     lat: buildingLocation.lat,
                     lon: buildingLocation.lon,
-                    height: 0
+                    height: 0,
+                    // Add region info but don't modify the name property
+                    region: region.name
                 };
             }
         } catch (error) {
-            console.warn("Retrying with a new random point...");
+            console.warn(`Retrying with a new random point in ${region.name}...`);
+            statusElement.textContent = `No buildings found in ${region.name}, trying again...`;
         }
     }
 }
@@ -812,6 +847,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
         },
         stats: {
             location: location.name,
+            region: location.region || "Unknown Region", // Add region info to stats
             altitude1,
             altitude2,
             distance: Math.round(distance),
