@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Grid Viewer</title>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --danger-color: #e74c3c;
+            --success-color: #2ecc71;
+            --dark-bg: #2c3e50;
+            --light-bg: #f3f5f7;
+            --card-bg: #fff;
+            --border-radius: 6px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: var(--light-bg);
+            color: #333;
+            padding: 15px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background-color: var(--dark-bg);
+            color: white;
+            border-radius: var(--border-radius);
+            margin-bottom: 15px;
+        }
+
+        button {
+            cursor: pointer;
+            padding: 8px 15px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        button.danger {
+            background-color: var(--danger-color);
+        }
+
+        button.danger:hover {
+            background-color: #c0392b;
+        }
+
+        button.success {
+            background-color: var(--success-color);
+        }
+
+        button.success:hover {
+            background-color: #27ae60;
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            background: var(--card-bg);
+            padding: 10px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+        }
+
+        .stat-item {
+            flex: 1;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 22px;
+            font-weight: bold;
+            color: var(--dark-bg);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #777;
+            text-transform: uppercase;
+        }
+
+        #status {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: var(--border-radius);
+            background-color: var(--card-bg);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+        }
+
+        /* Progress bar */
+        #progress-container {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            background-color: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+            display: none;
+        }
+
+        .progress-bar-outer {
+            height: 15px;
+            background-color: #eee;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+
+        .progress-bar-inner {
+            height: 100%;
+            width: 0%;
+            background-color: var(--primary-color);
+            border-radius: 10px;
+            transition: width 0.3s;
+        }
+
+        #progress-text {
+            font-size: 12px;
+            text-align: center;
+            color: #666;
+        }
+
+        /* Image grid */
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .image-item {
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            transition: transform 0.2s;
+        }
+
+        .image-item:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .image-item.deleted {
+            opacity: 0.5;
+        }
+
+        .image-container {
+            position: relative;
+            padding-top: 75%; /* 4:3 aspect ratio */
+            overflow: hidden;
+            background-color: #eee;
+        }
+
+        .image-container img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            cursor: pointer;
+        }
+
+        .image-footer {
+            padding: 8px 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid #eee;
+        }
+
+        .image-info {
+            font-size: 12px;
+            color: #666;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .image-actions button {
+            padding: 3px 8px;
+            font-size: 12px;
+        }
+
+        /* Loading spinner */
+        .loader {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: var(--primary-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 50px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Fullscreen image modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+
+        .modal.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            max-width: 90%;
+            max-height: 90%;
+            position: relative;
+        }
+
+        .modal-image {
+            max-width: 100%;
+            max-height: 90vh;
+            display: block;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-info {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        /* Confirmation dialog */
+        .dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1001;
+            display: none;
+        }
+
+        .dialog {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            z-index: 1002;
+            width: 300px;
+            text-align: center;
+            display: none;
+        }
+
+        .dialog p {
+            margin-bottom: 20px;
+        }
+
+        .dialog-buttons {
+            display: flex;
+            justify-content: space-around;
+        }
+
+        .load-more {
+            display: block;
+            width: 200px;
+            margin: 20px auto;
+            padding: 10px;
+            text-align: center;
+        }
+
+        /* No images message */
+        .no-images {
+            text-align: center;
+            padding: 50px;
+            color: #777;
+            font-size: 18px;
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Dataset Grid Viewer</h1>
+        <div class="controls">
+            <button id="select-folder" class="success">Select Dataset Folder</button>
+            <button id="delete-all" class="danger" disabled>Delete Marked Images</button>
+        </div>
+    </header>
+
+    <div id="status">Select a dataset folder to begin...</div>
+
+    <!-- Progress bar -->
+    <div id="progress-container">
+        <div class="progress-bar-outer">
+            <div id="progress-bar" class="progress-bar-inner"></div>
+        </div>
+        <div id="progress-text">Processing...</div>
+    </div>
+
+    <!-- Stats display -->
+    <div class="stats">
+        <div class="stat-item">
+            <div class="stat-value" id="total-count">0</div>
+            <div class="stat-label">Total Pairs</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="loaded-count">0</div>
+            <div class="stat-label">Loaded</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="deleted-count">0</div>
+            <div class="stat-label">Marked for Deletion</div>
+        </div>
+    </div>
+
+    <!-- Grid container -->
+    <div id="image-grid" class="image-grid">
+        <div class="loader" id="loader"></div>
+    </div>
+
+    <!-- Load more button -->
+    <button id="load-more" class="load-more" style="display: none;">Load More</button>
+
+    <!-- Fullscreen image modal -->
+    <div class="modal" id="image-modal">
+        <div class="modal-content">
+            <button class="modal-close" id="modal-close">×</button>
+            <img src="" alt="Full size view" class="modal-image" id="modal-image">
+            <div class="modal-info" id="modal-info"></div>
+        </div>
+    </div>
+
+    <!-- Confirmation dialog -->
+    <div class="dialog-overlay" id="dialog-overlay"></div>
+    <div class="dialog" id="dialog">
+        <p id="dialog-message">Are you sure?</p>
+        <div class="dialog-buttons">
+            <button id="dialog-cancel">Cancel</button>
+            <button id="dialog-confirm" class="danger">Delete</button>
+        </div>
+    </div>
+
+    <script>
+        // State management
+        const state = {
+            folderHandle: null,         // Directory handle
+            dataPairs: [],              // All dataset pairs
+            loadedPairs: [],            // Currently loaded pairs
+            deletedPairs: new Set(),    // Set of pairs marked for deletion
+            batchSize: 30,              // How many images to load at once
+            currentBatch: 0,            // Current batch index
+            loading: false,             // Loading state flag
+            modalPairIndex: -1          // Currently displayed in the modal
+        };
+
+        // DOM elements
+        const elements = {
+            selectFolder: document.getElementById('select-folder'),
+            deleteAll: document.getElementById('delete-all'),
+            status: document.getElementById('status'),
+            totalCount: document.getElementById('total-count'),
+            loadedCount: document.getElementById('loaded-count'),
+            deletedCount: document.getElementById('deleted-count'),
+            imageGrid: document.getElementById('image-grid'),
+            loader: document.getElementById('loader'),
+            loadMore: document.getElementById('load-more'),
+            progressContainer: document.getElementById('progress-container'),
+            progressBar: document.getElementById('progress-bar'),
+            progressText: document.getElementById('progress-text'),
+            imageModal: document.getElementById('image-modal'),
+            modalImage: document.getElementById('modal-image'),
+            modalClose: document.getElementById('modal-close'),
+            modalInfo: document.getElementById('modal-info'),
+            dialogOverlay: document.getElementById('dialog-overlay'),
+            dialog: document.getElementById('dialog'),
+            dialogMessage: document.getElementById('dialog-message'),
+            dialogCancel: document.getElementById('dialog-cancel'),
+            dialogConfirm: document.getElementById('dialog-confirm')
+        };
+
+        // Initialize the app
+        function init() {
+            // Check if File System Access API is supported
+            if (!('showDirectoryPicker' in window)) {
+                updateStatus('Your browser does not support the File System Access API. Please use Chrome, Edge, or another Chromium-based browser.', 'error');
+                elements.selectFolder.disabled = true;
+                return;
+            }
+
+            // Set up event listeners
+            setupEventListeners();
+
+            // Load any previously marked deleted pairs from localStorage
+            loadDeletedPairsFromStorage();
+        }
+
+        // Set up event listeners
+        function setupEventListeners() {
+            // Main controls
+            elements.selectFolder.addEventListener('click', handleSelectFolder);
+            elements.deleteAll.addEventListener('click', handleDeleteMarkedPairs);
+            elements.loadMore.addEventListener('click', loadMorePairs);
+
+            // Modal
+            elements.modalClose.addEventListener('click', closeModal);
+            elements.imageModal.addEventListener('click', event => {
+                if (event.target === elements.imageModal) {
+                    closeModal();
+                }
+            });
+
+            // Dialog
+            elements.dialogCancel.addEventListener('click', closeDialog);
+        }
+
+        // Handle folder selection
+        async function handleSelectFolder() {
+            try {
+                // Reset state
+                resetState();
+                elements.imageGrid.innerHTML = '<div class="loader" id="loader"></div>';
+                elements.loader = document.getElementById('loader');
+                
+                updateStatus('Selecting folder...', 'info');
+
+                // Request directory access
+                state.folderHandle = await window.showDirectoryPicker({
+                    mode: 'readwrite',
+                    startIn: 'downloads'
+                });
+
+                updateStatus(`Loading dataset from: ${state.folderHandle.name}`, 'info');
+                
+                // Scan directory
+                await scanDirectory();
+                
+                // Load first batch of images
+                if (state.dataPairs.length > 0) {
+                    loadPairsBatch();
+                } else {
+                    elements.imageGrid.innerHTML = '<div class="no-images">No valid image pairs found in the selected folder.</div>';
+                    updateStatus('No valid image pairs found.', 'error');
+                }
+                
+                // Update UI
+                updateStats();
+            } catch (error) {
+                console.error('Error selecting folder:', error);
+                updateStatus(`Error: ${error.message}`, 'error');
+                elements.loader.style.display = 'none';
+            }
+        }
+
+        // Reset the application state
+        function resetState() {
+            // Keep deletedPairs to persist between folder selections
+            state.folderHandle = null;
+            state.dataPairs = [];
+            state.loadedPairs = [];
+            state.currentBatch = 0;
+            state.loading = false;
+            state.modalPairIndex = -1;
+            
+            // Update UI stats
+            updateStats();
+            
+            // Hide load more button
+            elements.loadMore.style.display = 'none';
+        }
+
+        // Scan directory for image pairs
+        async function scanDirectory() {
+            try {
+                // Get all subdirectories in the main folder that match our pattern
+                const pairFolders = [];
+                for await (const entry of state.folderHandle.values()) {
+                    if (entry.kind === 'directory' && entry.name.startsWith('pair_')) {
+                        pairFolders.push(entry);
+                    }
+                }
+                
+                // Sort folders by their index number
+                pairFolders.sort((a, b) => {
+                    const indexA = parseInt(a.name.split('_')[1]) || 0;
+                    const indexB = parseInt(b.name.split('_')[1]) || 0;
+                    return indexA - indexB;
+                });
+                
+                updateStatus(`Found ${pairFolders.length} potential dataset pairs. Loading metadata...`, 'info');
+                
+                // Process each folder to extract metadata (not the images yet)
+                for (const folder of pairFolders) {
+                    try {
+                        // For quick loading, just store the folder handle and minimal info
+                        // We'll load the actual images later in batches
+                        const pairData = {
+                            name: folder.name,
+                            folder: folder,
+                            index: parseInt(folder.name.split('_')[1]) || 0,
+                            location: folder.name.split('_')[2] || 'Unknown',
+                            images: {
+                                debug: null, // Will be loaded later
+                                view1: null,
+                                view2: null
+                            },
+                            objectUrls: {
+                                debug: null,
+                                view1: null,
+                                view2: null
+                            },
+                            loaded: false
+                        };
+                        
+                        state.dataPairs.push(pairData);
+                        
+                        // Update status every 100 pairs
+                        if (state.dataPairs.length % 100 === 0) {
+                            updateStatus(`Indexed ${state.dataPairs.length} of ${pairFolders.length} pairs...`, 'info');
+                        }
+                    } catch (error) {
+                        console.warn(`Skipping folder ${folder.name} due to error:`, error);
+                    }
+                }
+                
+                updateStatus(`Successfully indexed ${state.dataPairs.length} dataset pairs.`, 'success');
+            } catch (error) {
+                console.error('Error scanning directory:', error);
+                updateStatus(`Error scanning directory: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Load a batch of pairs into the grid
+        async function loadPairsBatch() {
+            if (state.loading || state.currentBatch * state.batchSize >= state.dataPairs.length) {
+                return;
+            }
+            
+            state.loading = true;
+            elements.loader.style.display = 'block';
+            
+            const start = state.currentBatch * state.batchSize;
+            const end = Math.min(start + state.batchSize, state.dataPairs.length);
+            
+            updateStatus(`Loading pairs ${start + 1} to ${end} of ${state.dataPairs.length}...`, 'info');
+            
+            const batch = state.dataPairs.slice(start, end);
+            
+            // Load each pair's images
+            for (const pair of batch) {
+                try {
+                    await loadPairImages(pair);
+                    
+                    // Add to loaded pairs
+                    state.loadedPairs.push(pair);
+                    
+                    // Add to the grid
+                    addPairToGrid(pair);
+                    
+                    // Update the stats
+                    updateStats();
+                } catch (error) {
+                    console.warn(`Error loading pair ${pair.name}:`, error);
+                }
+            }
+            
+            // Hide loader
+            elements.loader.style.display = 'none';
+            
+            // Show load more button if there are more pairs
+            if (end < state.dataPairs.length) {
+                elements.loadMore.style.display = 'block';
+            } else {
+                elements.loadMore.style.display = 'none';
+            }
+            
+            // Increment batch counter
+            state.currentBatch++;
+            state.loading = false;
+            
+            updateStatus(`Loaded ${state.loadedPairs.length} of ${state.dataPairs.length} pairs.`, 'success');
+        }
+
+        // Load more button handler
+        function loadMorePairs() {
+            if (!state.loading) {
+                loadPairsBatch();
+            }
+        }
+
+        // Load images for a pair
+        async function loadPairImages(pair) {
+            if (pair.loaded) return;
+            
+            try {
+                // First try to get the debug image (combined view)
+                try {
+                    const debugFile = await pair.folder.getFileHandle('debug.jpg');
+                    pair.images.debug = await debugFile.getFile();
+                    pair.objectUrls.debug = URL.createObjectURL(pair.images.debug);
+                } catch (e) {
+                    // If no debug image, we'll load view1 and view2 separately
+                    try {
+                        const view1File = await pair.folder.getFileHandle('view1.jpg');
+                        pair.images.view1 = await view1File.getFile();
+                        pair.objectUrls.view1 = URL.createObjectURL(pair.images.view1);
+                        
+                        const view2File = await pair.folder.getFileHandle('view2.jpg');
+                        pair.images.view2 = await view2File.getFile();
+                        pair.objectUrls.view2 = URL.createObjectURL(pair.images.view2);
+                    } catch (innerError) {
+                        throw new Error(`Could not load view images: ${innerError.message}`);
+                    }
+                }
+                
+                pair.loaded = true;
+                return pair;
+            } catch (error) {
+                console.error(`Error loading images for pair ${pair.name}:`, error);
+                throw error;
+            }
+        }
+
+        // Add a pair to the image grid
+        function addPairToGrid(pair) {
+            const isDeleted = state.deletedPairs.has(pair.name);
+            const pairIndex = state.loadedPairs.length - 1;
+            
+            const item = document.createElement('div');
+            item.className = `image-item${isDeleted ? ' deleted' : ''}`;
+            item.dataset.name = pair.name;
+            item.dataset.index = pairIndex;
+            
+            let imageUrl;
+            if (pair.objectUrls.debug) {
+                imageUrl = pair.objectUrls.debug;
+            } else if (pair.objectUrls.view1) {
+                imageUrl = pair.objectUrls.view1; // Fallback to view1 if no debug
+            } else {
+                imageUrl = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlIE5vdCBGb3VuZDwvdGV4dD48L3N2Zz4=';
+            }
+            
+            item.innerHTML = `
+                <div class="image-container">
+                    <img src="${imageUrl}" alt="Pair ${pair.index}" loading="lazy">
+                </div>
+                <div class="image-footer">
+                    <div class="image-info">Pair ${pair.index}</div>
+                    <div class="image-actions">
+                        <button class="delete-button${isDeleted ? ' success' : ' danger'}">${isDeleted ? 'Restore' : 'Delete'}</button>
+                    </div>
+                </div>
+            `;
+            
+            // Add event listeners
+            item.querySelector('img').addEventListener('click', () => openImageModal(pairIndex));
+            item.querySelector('.delete-button').addEventListener('click', () => toggleDeletePair(pair.name));
+            
+            // Add to the grid
+            if (elements.loader.parentNode === elements.imageGrid) {
+                elements.imageGrid.insertBefore(item, elements.loader);
+            } else {
+                elements.imageGrid.appendChild(item);
+            }
+        }
+
+        // Toggle delete status for a pair
+        function toggleDeletePair(pairName) {
+            if (state.deletedPairs.has(pairName)) {
+                state.deletedPairs.delete(pairName);
+            } else {
+                state.deletedPairs.add(pairName);
+            }
+            
+            // Update UI
+            const item = elements.imageGrid.querySelector(`.image-item[data-name="${pairName}"]`);
+            if (item) {
+                const isDeleted = state.deletedPairs.has(pairName);
+                item.classList.toggle('deleted', isDeleted);
+                
+                const button = item.querySelector('.delete-button');
+                if (button) {
+                    button.textContent = isDeleted ? 'Restore' : 'Delete';
+                    button.classList.toggle('danger', !isDeleted);
+                    button.classList.toggle('success', isDeleted);
+                }
+            }
+            
+            // Update stats and enable delete button if needed
+            updateStats();
+            
+            // Save to localStorage
+            saveDeletedPairsToStorage();
+        }
+
+        // Open image in modal for fullscreen view
+        function openImageModal(pairIndex) {
+            const pair = state.loadedPairs[pairIndex];
+            if (!pair) return;
+            
+            state.modalPairIndex = pairIndex;
+            
+            let imageUrl;
+            if (pair.objectUrls.debug) {
+                imageUrl = pair.objectUrls.debug;
+            } else if (pair.objectUrls.view1) {
+                imageUrl = pair.objectUrls.view1;
+            } else {
+                return; // No image to show
+            }
+            
+            elements.modalImage.src = imageUrl;
+            elements.modalInfo.textContent = `Pair ${pair.index} - ${pair.name}`;
+            elements.imageModal.classList.add('show');
+        }
+
+        // Close the image modal
+        function closeModal() {
+            elements.imageModal.classList.remove('show');
+            state.modalPairIndex = -1;
+        }
+
+        // Handle permanent deletion of marked pairs
+        function handleDeleteMarkedPairs() {
+            if (state.deletedPairs.size === 0) {
+                updateStatus('No pairs have been marked for deletion.', 'info');
+                return;
+            }
+            
+            showDialog(
+                `Are you sure you want to PERMANENTLY DELETE ${state.deletedPairs.size} marked pairs? This cannot be undone!`,
+                performDelete
+            );
+        }
+
+        // Actually perform the deletion
+        async function performDelete() {
+            try {
+                if (!state.folderHandle) {
+                    updateStatus('No folder access. Please select a folder first.', 'error');
+                    return;
+                }
+                
+                // Show progress UI
+                showProgress(0, state.deletedPairs.size);
+                updateStatus('Deleting marked pairs...', 'info');
+                
+                const deletedNames = [...state.deletedPairs];
+                const deletedSuccessfully = [];
+                
+                // Delete each marked pair
+                for (let i = 0; i < deletedNames.length; i++) {
+                    const pairName = deletedNames[i];
+                    
+                    try {
+                        // Find the pair in the full dataset
+                        const pair = state.dataPairs.find(p => p.name === pairName);
+                        if (!pair) continue;
+                        
+                        // Update progress
+                        updateProgress(i, deletedNames.length, `Deleting ${pairName} (${i+1}/${deletedNames.length})`);
+                        
+                        // Delete folder contents first
+                        const folderHandle = pair.folder;
+                        for await (const entry of folderHandle.values()) {
+                            try {
+                                await folderHandle.removeEntry(entry.name);
+                            } catch (fileError) {
+                                console.warn(`Could not delete file ${entry.name} in ${pairName}:`, fileError);
+                            }
+                        }
+                        
+                        // Delete the folder itself
+                        await state.folderHandle.removeEntry(pairName, { recursive: true });
+                        
+                        // Clean up object URLs
+                        if (pair.objectUrls) {
+                            if (pair.objectUrls.debug) URL.revokeObjectURL(pair.objectUrls.debug);
+                            if (pair.objectUrls.view1) URL.revokeObjectURL(pair.objectUrls.view1);
+                            if (pair.objectUrls.view2) URL.revokeObjectURL(pair.objectUrls.view2);
+                        }
+                        
+                        // Mark as successfully deleted
+                        deletedSuccessfully.push(pairName);
+                    } catch (error) {
+                        console.error(`Error deleting folder ${pairName}:`, error);
+                    }
+                }
+                
+                // Hide progress
+                hideProgress();
+                
+                // Remove deleted pairs from UI
+                for (const pairName of deletedSuccessfully) {
+                    const item = elements.imageGrid.querySelector(`.image-item[data-name="${pairName}"]`);
+                    if (item) {
+                        item.remove();
+                    }
+                    
+                    // Remove from data structures
+                    state.deletedPairs.delete(pairName);
+                    
+                    // Remove from loaded pairs
+                    const loadedIndex = state.loadedPairs.findIndex(p => p.name === pairName);
+                    if (loadedIndex >= 0) {
+                        state.loadedPairs.splice(loadedIndex, 1);
+                    }
+                    
+                    // Remove from data pairs
+                    const dataIndex = state.dataPairs.findIndex(p => p.name === pairName);
+                    if (dataIndex >= 0) {
+                        state.dataPairs.splice(dataIndex, 1);
+                    }
+                }
+                
+                // Update localStorage
+                saveDeletedPairsToStorage();
+                
+                // Update stats
+                updateStats();
+                
+                // Show results
+                if (deletedSuccessfully.length === deletedNames.length) {
+                    updateStatus(`Successfully deleted ${deletedSuccessfully.length} pairs.`, 'success');
+                } else {
+                    updateStatus(`Deleted ${deletedSuccessfully.length} out of ${deletedNames.length} pairs. Some pairs could not be deleted.`, 'warning');
+                }
+                
+                // If all pairs were deleted, show message
+                if (state.dataPairs.length === 0) {
+                    elements.imageGrid.innerHTML = '<div class="no-images">No image pairs remaining.</div>';
+                }
+            } catch (error) {
+                hideProgress();
+                console.error('Error during file deletion:', error);
+                updateStatus(`Error deleting files: ${error.message}`, 'error');
+            }
+        }
+
+        // Show confirmation dialog
+        function showDialog(message, confirmCallback) {
+            elements.dialogMessage.textContent = message;
+            elements.dialogOverlay.style.display = 'block';
+            elements.dialog.style.display = 'block';
+            
+            // Remove any existing confirm handler
+            elements.dialogConfirm.removeEventListener('click', elements.dialogConfirm._confirmHandler);
+            
+            // Set up new handler
+            elements.dialogConfirm._confirmHandler = () => {
+                confirmCallback();
+                closeDialog();
+            };
+            
+            elements.dialogConfirm.addEventListener('click', elements.dialogConfirm._confirmHandler);
+        }
+
+        // Close the dialog
+        function closeDialog() {
+            elements.dialogOverlay.style.display = 'none';
+            elements.dialog.style.display = 'none';
+        }
+
+        // Show progress UI
+        function showProgress(current, total) {
+            elements.progressContainer.style.display = 'block';
+            updateProgress(current, total);
+        }
+
+        // Update progress bar
+        function updateProgress(current, total, message = null) {
+            const percent = Math.round((current / total) * 100);
+            elements.progressBar.style.width = `${percent}%`;
+            
+            if (message) {
+                elements.progressText.textContent = message;
+            }
+        }
+
+        // Hide progress UI
+        function hideProgress() {
+            elements.progressContainer.style.display = 'none';
+        }
+
+        // Update stats display
+        function updateStats() {
+            elements.totalCount.textContent = state.dataPairs.length;
+            elements.loadedCount.textContent = state.loadedPairs.length;
+            elements.deletedCount.textContent = state.deletedPairs.size;
+            
+            // Enable/disable delete button
+            elements.deleteAll.disabled = state.deletedPairs.size === 0;
+        }
+
+        // Update status message
+        function updateStatus(message, type = 'info') {
+            elements.status.textContent = message;
+            
+            // Reset classes
+            elements.status.className = '';
+            elements.status.classList.add(type);
+        }
+
+        // Save deleted pairs to localStorage
+        function saveDeletedPairsToStorage() {
+            try {
+                const data = {
+                    timestamp: new Date().toISOString(),
+                    folderName: state.folderHandle ? state.folderHandle.name : null,
+                    deletedPairs: [...state.deletedPairs]
+                };
+                
+                localStorage.setItem('datasetGridDeletedPairs', JSON.stringify(data));
+            } catch (error) {
+                console.warn('Error saving deleted pairs to localStorage:', error);
+            }
+        }
+
+        // Load deleted pairs from localStorage
+        function loadDeletedPairsFromStorage() {
+            try {
+                const savedData = localStorage.getItem('datasetGridDeletedPairs');
+                if (savedData) {
+                    const data = JSON.parse(savedData);
+                    state.deletedPairs = new Set(data.deletedPairs);
+                    
+                    console.info(`Loaded ${state.deletedPairs.size} deleted pairs from previous session`);
+                }
+            } catch (error) {
+                console.warn('Error loading deleted pairs from localStorage:', error);
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
