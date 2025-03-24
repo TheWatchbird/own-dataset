@@ -3,7 +3,14 @@
  */
 
 import { CESIUM_TOKEN, VIEW_SETTINGS, VIEWER_SETTINGS1, VIEWER_SETTINGS2 } from './config.js';
-import { setupCameraViews, generateRandomLocation, CameraView } from './sceneGenerator.js';
+import { 
+    setupCameraViews, 
+    generateRandomLocation, 
+    CameraView,
+    startBackgroundLocationGenerator,
+    getLocationQueueSize,
+    clearLocationQueue
+} from './sceneGenerator.js';
 import { drawMatchingLines, showLoading, showError, hideLoading, cleanupCanvas } from './visualization.js';
 import { 
     exportDataset, 
@@ -30,6 +37,9 @@ function initApp() {
     // Create viewers
     createViewers();
     
+    // Start background location generation immediately
+    startBackgroundLocationGenerator();
+    
     // Check if File System Access API is supported
     const selectDirectoryBtn = document.getElementById('select-directory-btn');
     const generateDatasetBtn = document.getElementById('generate-dataset-btn');
@@ -53,12 +63,47 @@ function initApp() {
     }
     
     // Set up event listeners
-    document.getElementById('generate-btn').addEventListener('click', () => {
-        generateNewViews().catch(error => {
+    document.getElementById('generate-btn').addEventListener('click', async () => {
+        try {
+            // First make sure we're ready for a complete refresh
+            showLoading('Preparing new location...');
+            
+            // Force destroy any existing viewers
+            if (viewer1) {
+                try {
+                    viewer1.destroy();
+                    viewer1 = null;
+                } catch (e) {
+                    console.warn("Error destroying viewer1:", e);
+                }
+            }
+            if (viewer2) {
+                try {
+                    viewer2.destroy();
+                    viewer2 = null;
+                } catch (e) {
+                    console.warn("Error destroying viewer2:", e);
+                }
+            }
+            
+            // Reset all state
+            cleanupCanvas();
+            matchingPoints = [];
+            currentLocation = null;
+            
+            // Make sure the background generator is running
+            startBackgroundLocationGenerator();
+            
+            // IMPORTANT: Wait a moment to ensure DOM is cleared before rebuilding
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Generate new views with clean state
+            await generateNewViews();
+        } catch (error) {
             console.error("Error generating views:", error);
             showError(error.message);
             hideLoading();
-        });
+        }
     });
     document.getElementById('retry-btn')?.addEventListener('click', retryGeneration);
     document.getElementById('export-btn').addEventListener('click', handleExport);
@@ -137,22 +182,41 @@ async function generateNewViews() {
         // Show loading message
         showLoading('Generating drone views with virtual object...');
         
-        // Generate a random location
-        currentLocation = await generateRandomLocation();
+        // Generate a random location - force a new one from the queue if available
+        console.log(`Getting new location. Queue size: ${getLocationQueueSize()}`);
         
-        // Location selected
+        // Add a timeout to ensure we don't get stuck waiting for a location
+        currentLocation = await Promise.race([
+            generateRandomLocation(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Location generation timed out")), 5000))
+        ]);
+        
+        console.log(`Using location: ${JSON.stringify(currentLocation)}`);
         
         // Create fresh viewers
         createViewers();
         
-        // Generate scene with cameras and virtual object
-        const result = await setupCameraViews(viewer1, viewer2, currentLocation);
+        // Make sure we force the scene to fully rebuild with the new location
+        // Add some debug output to track the process
+        console.log("Setting up new scene with location:", JSON.stringify(currentLocation));
+        showLoading(`Setting up scene with location in ${currentLocation.region}...`);
+        
+        // Generate scene with cameras and virtual object - also add timeout 
+        const result = await Promise.race([
+            setupCameraViews(viewer1, viewer2, currentLocation),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Scene setup timed out")), 15000))
+        ]);
+        
+        console.log("Scene setup complete:", result?.stats?.region || "unknown region");
         
         // Store matching points (projections of the virtual object)
         matchingPoints = result.matchingPoints;
         
-        // Log the results
-        // Virtual object projected to both views
+        // Reset location status display to confirm this is a new location
+        const statusElement = document.getElementById('location-status');
+        if (statusElement) {
+            statusElement.textContent = `Using location: ${currentLocation.region} (${currentLocation.lat.toFixed(4)}, ${currentLocation.lon.toFixed(4)})`;
+        }
         
         // Update stats and visualization
         updateStats(result.stats);
@@ -178,6 +242,30 @@ async function generateNewViews() {
  */
 function retryGeneration() {
     // Implementation is simplified since our approach should always work
+    // Force viewer reset to make sure we get a fresh scene
+    if (viewer1) {
+        try {
+            viewer1.destroy();
+            viewer1 = null;
+        } catch (e) {
+            console.warn("Error destroying viewer1:", e);
+        }
+    }
+    if (viewer2) {
+        try {
+            viewer2.destroy();
+            viewer2 = null;
+        } catch (e) {
+            console.warn("Error destroying viewer2:", e);
+        }
+    }
+    
+    // Clear state
+    cleanupCanvas();
+    matchingPoints = [];
+    currentLocation = null;
+    
+    // Generate new views
     generateNewViews();
 }
 
@@ -301,10 +389,13 @@ async function generateDataset() {
         generateButton.disabled = true;
         generateButton.textContent = 'Generating...';
         
-        // Track timing for ETA calculation
+        // Track timing for ETA calculation and phase timing
         const startTime = Date.now();
         let lastPairTime = startTime;
         let avgPairTime = 0;
+        
+        // For detailed phase timing
+        let phaseStartTime = 0;
         
         // Add ETA element next to progress
         const etaElement = document.createElement('span');
@@ -313,20 +404,71 @@ async function generateDataset() {
         etaElement.textContent = 'Calculating...';
         progressElement.appendChild(etaElement);
         
+        // Ensure location queue is started
+        showLoading('Ensuring location queue is populated...');
+        startBackgroundLocationGenerator(); // Will check internally if already running
+        // Wait a bit for at least one location to be generated
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        hideLoading();
+        
         // Generate each pair and save directly to disk
         for (let i = 0; i < count; i++) {
             // Update progress
             progressCountElement.textContent = i;
             
-            // Reset Cesium viewers periodically to prevent memory issues
-            if (i > 0 && i % 50 === 0) {
-                // Destroy and recreate viewers
+            // Reset Cesium viewers more frequently to prevent memory issues
+            if (i > 0 && i % 10 === 0) {
+                // Destroy and recreate viewers with proper cleanup
                 if (viewer1) {
-                    viewer1.destroy();
+                    // First properly unsubscribe from all events
+                    try {
+                        // Clear event listeners
+                        viewer1.camera.moveEnd._listeners = [];
+                        viewer1.camera.changed._listeners = [];
+                        
+                        // Remove all entities
+                        viewer1.entities.removeAll();
+                        
+                        // Remove primitives
+                        for (let i = viewer1.scene.primitives.length - 1; i >= 0; i--) {
+                            try {
+                                viewer1.scene.primitives.remove(viewer1.scene.primitives.get(i));
+                            } catch (e) {
+                                console.warn("Error removing primitive:", e);
+                            }
+                        }
+                        
+                        // Now destroy the viewer
+                        viewer1.destroy();
+                    } catch (e) {
+                        console.warn("Error during viewer1 cleanup:", e);
+                    }
                     viewer1 = null;
                 }
+                
                 if (viewer2) {
-                    viewer2.destroy();
+                    try {
+                        // Clear event listeners
+                        viewer2.camera.moveEnd._listeners = [];
+                        viewer2.camera.changed._listeners = [];
+                        
+                        // Remove all entities
+                        viewer2.entities.removeAll();
+                        
+                        // Remove primitives
+                        for (let i = viewer2.scene.primitives.length - 1; i >= 0; i--) {
+                            try {
+                                viewer2.scene.primitives.remove(viewer2.scene.primitives.get(i));
+                            } catch (e) {
+                                console.warn("Error removing primitive:", e);
+                            }
+                        }
+                        
+                        // Now destroy the viewer
+                        viewer2.destroy();
+                    } catch (e) {
+                        console.warn("Error during viewer2 cleanup:", e);
+                    }
                     viewer2 = null;
                 }
                 
@@ -336,15 +478,49 @@ async function generateDataset() {
                 // Clear any other potential references
                 matchingPoints = [];
                 
-                // Allow time for garbage collection
-                await new Promise(resolve => setTimeout(resolve, 100));
+                // Force garbage collection with a longer pause
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 // Recreate viewers
                 createViewers();
             }
             
+            // Start timing this phase 
+            phaseStartTime = Date.now();
+            
             // First generate the next view location - this gives time for rendering
-            await generateNewViews();
+            // Also handle errors and retry with a new location if needed
+            try {
+                await generateNewViews();
+                console.log(`Location generation took: ${Math.round((Date.now() - phaseStartTime)/1000)}s`);
+            } catch (error) {
+                console.warn(`Issue with scene generation: ${error.message}. Trying a new location.`);
+                
+                // Force complete recreation of viewers and scene
+                if (viewer1) {
+                    try { viewer1.destroy(); } catch (e) { console.warn("Error destroying viewer:", e); }
+                    viewer1 = null;
+                }
+                if (viewer2) {
+                    try { viewer2.destroy(); } catch (e) { console.warn("Error destroying viewer:", e); }
+                    viewer2 = null;
+                }
+                
+                // Reset all state
+                cleanupCanvas();
+                matchingPoints = [];
+                currentLocation = null;
+                
+                // Wait a moment for cleanup
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Try again
+                createViewers();
+                await generateNewViews();
+            }
+            
+            // Start timing scene loading phase
+            phaseStartTime = Date.now();
             
             // Wait for both scenes to be fully loaded and rendered before capturing
             showLoading('Waiting for scenes to load completely...');
@@ -355,71 +531,109 @@ async function generateDataset() {
                 waitForSceneToLoad(viewer2)
             ]);
             
+            console.log(`Scene loading took: ${Math.round((Date.now() - phaseStartTime)/1000)}s`);
+            
             // Additional render cycles to ensure everything is displayed
             viewer1.scene.render();
             viewer2.scene.render();
             
-            // Force higher detail level imagery for better screenshots
-            viewer1.scene.globe.maximumScreenSpaceError = 0.5; // Very high detail (lower value = more detail)
-            viewer2.scene.globe.maximumScreenSpaceError = 0.5;
+            // Calculate how much more time we should give for loading
+            // For dataset generation, we can be more patient 
+            // For interactive use, we should be faster
+            const isDatasetGeneration = i !== undefined; // If in loop, it's dataset generation
+            
+            // Set error threshold based on whether we're in dataset generation
+            generateNewViews.skipProblemScenes = isDatasetGeneration; // Will be used later to decide if we should skip
+            
+            // Force medium detail level imagery for screenshots (balanced approach)
+            viewer1.scene.globe.maximumScreenSpaceError = 1.2; // Balanced detail level
+            viewer2.scene.globe.maximumScreenSpaceError = 1.2;
             
             // Force imagery to load at highest available resolution
             viewer1.scene.globe.preloadSiblings = true;
             viewer2.scene.globe.preloadSiblings = true;
             
-            // Make sure the rendering has actually completed with high-quality imagery
-            await new Promise(resolve => {
-                // Show feedback about what's happening
-                showLoading('Enhancing image quality...');
-                
-                // Set higher quality imagery
-                viewer1.scene.globe.maximumScreenSpaceError = 0.5; // Very high detail
-                viewer2.scene.globe.maximumScreenSpaceError = 0.5;
-                
-                // Force imagery to load at highest available resolution
-                viewer1.scene.globe.preloadSiblings = true;
-                viewer2.scene.globe.preloadSiblings = true;
-                
-                // Initial render to trigger loading
+            // Start timing image quality phase
+            phaseStartTime = Date.now();
+            
+            // Check if we need to skip this scene due to texture issues
+            let hasImageryIssues = false;
+            
+            try {
+                // Try to check if textures are available
                 viewer1.scene.render();
                 viewer2.scene.render();
                 
-                // Counter to track number of frames where tilesLoaded is true
-                // We want to make sure tiles stay loaded for multiple frames
-                let stableFrameCount = 0;
-                const requiredStableFrames = 10;
+                // Add a check for WebGL errors in console - this is heuristic
+                // We'll still continue but at least we know there was an issue
+                console.log("Checking image quality...");
                 
-                // To avoid recursion, we'll use requestAnimationFrame instead of directly calling render
-                let animationFrameId = null;
+                // More extensive quality enhancement with better texture loading
+                showLoading('Waiting for image tiles to load...');
                 
-                // Function to check tiles loaded status
-                const checkTilesLoaded = () => {
-                    if (viewer1.scene.globe.tilesLoaded && viewer2.scene.globe.tilesLoaded) {
-                        stableFrameCount++;
-                        showLoading(`Enhancing image quality (${stableFrameCount}/${requiredStableFrames})`);
-                        
-                        if (stableFrameCount >= requiredStableFrames) {
-                            // Resolve the promise
-                            resolve();
-                            return;
-                        }
-                    } else {
-                        // Reset counter if tiles aren't loaded
-                        stableFrameCount = 0;
-                    }
+                // Longer wait for imagery tiles to load properly
+                await new Promise(resolve => {
+                    // Set up a longer timeout for texture loading
+                    const timeoutId = setTimeout(() => {
+                        console.log("Image quality timeout reached, continuing anyway");
+                        resolve();
+                    }, 3000); // 3 seconds to load textures
                     
-                    // Continue checking in the next frame
-                    animationFrameId = requestAnimationFrame(checkTilesLoaded);
-                };
+                    // Track frames with consistent tile loading
+                    let stableFrames = 0;
+                    const requiredStableFrames = 10;  // Need more stable frames
+                    
+                    const checkImagery = () => {
+                        if (viewer1 && viewer1.scene && viewer2 && viewer2.scene) {
+                            viewer1.scene.render();
+                            viewer2.scene.render();
+                            
+                            // Check if ready
+                            if (viewer1.scene.globe.tilesLoaded && viewer2.scene.globe.tilesLoaded) {
+                                stableFrames++;
+                                showLoading(`Loading image tiles (${stableFrames}/${requiredStableFrames})`);
+                                
+                                if (stableFrames >= requiredStableFrames) {
+                                    clearTimeout(timeoutId);
+                                    resolve();
+                                    return;
+                                }
+                            } else {
+                                stableFrames = 0; // Reset if not loaded
+                            }
+                            
+                            requestAnimationFrame(checkImagery);
+                        } else {
+                            // Viewers were destroyed, resolve immediately
+                            clearTimeout(timeoutId);
+                            resolve();
+                        }
+                    };
+                    
+                    requestAnimationFrame(checkImagery);
+                });
+            } catch (e) {
+                console.warn("Image enhancement error:", e);
+                hasImageryIssues = true;
+            }
+            
+            // If we have serious texture issues, we might want to skip this scene
+            if (hasImageryIssues) {
+                console.warn("Scene has texture issues, but continuing anyway");
                 
-                // Start the checking process
-                animationFrameId = requestAnimationFrame(checkTilesLoaded);
-            });
+                // For dataset generation, let caller know if there were issues
+                if (this.skipProblemScenes) {
+                    throw new Error("Skipping scene due to texture loading issues");
+                }
+            }
+            
+            console.log(`Image quality enhancement took: ${Math.round((Date.now() - phaseStartTime)/1000)}s`);
             
             hideLoading();
             
             // Capture screenshots
             showLoading('Capturing screenshots...');
+            phaseStartTime = Date.now();
             
             // First, completely hide all entities for clean screenshots
             const entities1 = viewer1.entities.values.slice();
@@ -461,11 +675,7 @@ async function generateDataset() {
                 }
             }
             
-            // Force multiple renders to ensure everything is hidden
-            viewer1.scene.render();
-            viewer2.scene.render();
-            
-            // Additional render cycle to be absolutely sure
+            // Force one render cycle to ensure everything is hidden
             viewer1.scene.render();
             viewer2.scene.render();
             
@@ -494,11 +704,7 @@ async function generateDataset() {
                 }
             }
             
-            // Force multiple renders to ensure everything is visible again
-            viewer1.scene.render();
-            viewer2.scene.render();
-            
-            // Additional render cycle to be absolutely sure
+            // Force one render to ensure everything is visible again
             viewer1.scene.render();
             viewer2.scene.render();
             
@@ -506,8 +712,12 @@ async function generateDataset() {
             const debugView1 = viewer1.canvas.toDataURL('image/jpeg', 0.95);
             const debugView2 = viewer2.canvas.toDataURL('image/jpeg', 0.95);
             
+            // Log capture time
+            console.log(`Screenshot capture took: ${Math.round((Date.now() - phaseStartTime)/1000)}s`);
+            
             // Save the current pair directly to the selected directory
             showLoading(`Saving pair ${i+1}/${count} to disk...`);
+            phaseStartTime = Date.now();
             try {
                 await exportDataset(
                     viewer1, 
@@ -521,6 +731,9 @@ async function generateDataset() {
                     debugView2,
                     i // Pass the index for folder naming
                 );
+                
+                console.log(`Successfully exported pair ${i+1}/${count}`);
+                console.log(`Export to disk took: ${Math.round((Date.now() - phaseStartTime)/1000)}s`);
             } catch (error) {
                 console.error("Error saving pair:", error);
                 showError(`Error saving pair ${i+1}: ${error.message}`);
@@ -528,9 +741,14 @@ async function generateDataset() {
             }
             hideLoading();
             
-            // Calculate and update ETA
+            // Calculate and update ETA with performance tracking
             const currentTime = Date.now();
             const thisIterationTime = currentTime - lastPairTime;
+            
+            // Log the performance data for debugging
+            console.log(`Iteration ${i+1} timing: ${Math.round(thisIterationTime/1000)}s total time`);
+            
+            // Update timing trackers
             lastPairTime = currentTime;
             
             // Update running average
@@ -546,15 +764,10 @@ async function generateDataset() {
             const etaMinutes = Math.floor(estimatedRemainingSeconds / 60);
             const etaSeconds = estimatedRemainingSeconds % 60;
             
-            // Update ETA display
-            etaElement.textContent = `ETA: ${etaMinutes}m ${etaSeconds}s`;
-            
-            // Pre-generate the next location if not the last iteration
-            if (i < count - 1 && i % 50 !== 49) {  // Skip if we're about to recreate viewers
-                showLoading('Preparing next location...');
-                currentLocation = await generateRandomLocation();
-                hideLoading();
-            }
+            // Update ETA and time per iteration display
+            const avgTimePerIterationSec = Math.round(avgPairTime / 1000);
+            const thisIterationSec = Math.round(thisIterationTime / 1000);
+            etaElement.textContent = `ETA: ${etaMinutes}m ${etaSeconds}s (Last: ${thisIterationSec}s, Avg: ${avgTimePerIterationSec}s)`;
         }
         
         // All done - no need to export the collection, as we've saved each pair individually
@@ -581,9 +794,9 @@ async function generateDataset() {
 }
 
 /**
- * Wait for a Cesium scene to be fully loaded using proper event-based detection
+ * Wait for a Cesium scene to be minimally loaded - with a timeout and proper cleanup
  * @param {Cesium.Viewer} viewer - The Cesium viewer to check
- * @returns {Promise} - Promise that resolves when the scene is loaded
+ * @returns {Promise} - Promise that resolves when the scene is loaded or timeout occurs
  */
 function waitForSceneToLoad(viewer) {
     return new Promise(resolve => {
@@ -597,7 +810,7 @@ function waitForSceneToLoad(viewer) {
         
         // Force a higher detail level for better imagery quality
         if (globe) {
-            globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
+            globe.maximumScreenSpaceError = 1.5; // Higher value for faster loading but lower quality
         }
 
         // If scene is already loaded, resolve immediately
@@ -606,21 +819,59 @@ function waitForSceneToLoad(viewer) {
             return;
         }
         
+        // Set a maximum timeout for loading (3 seconds)
+        // This prevents hanging on slow internet connections
+        const timeoutId = setTimeout(() => {
+            // Clean up resources
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            if (eventRemover) {
+                eventRemover();
+            }
+            console.log("Scene load timeout reached - continuing anyway");
+            resolve();
+        }, 3000);
+        
         // Track if we've resolved yet
         let hasResolved = false;
         let animationFrameId = null;
+        let eventRemover = null;
+        
+        // Function to clean up and resolve
+        const cleanupAndResolve = () => {
+            if (hasResolved) return;
+            
+            hasResolved = true;
+            
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+            }
+            
+            if (eventRemover) {
+                eventRemover();
+                eventRemover = null;
+            }
+            
+            resolve();
+        };
         
         // Use requestAnimationFrame to check tile loading status
-        // This avoids potential recursion issues with scene.render()
         const checkTilesLoaded = () => {
-            // If already resolved, stop checking
-            if (hasResolved) return;
+            // If already resolved or viewer destroyed, clean up and stop
+            if (hasResolved || !viewer || !viewer.scene || !viewer.scene.globe) {
+                cleanupAndResolve();
+                return;
+            }
             
             // Check if tiles are loaded
             if (globe.tilesLoaded) {
-                hasResolved = true;
-                cancelAnimationFrame(animationFrameId);
-                resolve();
+                cleanupAndResolve();
                 return;
             }
             
@@ -635,12 +886,10 @@ function waitForSceneToLoad(viewer) {
         if (globe.tileLoadProgressEvent) {
             const removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
                 if (!hasResolved && globe.tilesLoaded) {
-                    hasResolved = true;
-                    cancelAnimationFrame(animationFrameId);
-                    removeListener();
-                    resolve();
+                    cleanupAndResolve();
                 }
             });
+            eventRemover = removeListener;
         }
     });
 }
