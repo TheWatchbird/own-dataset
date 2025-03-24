@@ -19,6 +19,63 @@ import {
 let viewer1, viewer2;
 let matchingPoints = [];
 let currentLocation;
+let locationQueue = []; // Queue to store preloaded locations
+let isPreloadingLocations = false; // Flag to track background preloading
+
+/**
+ * Start background location preloading
+ * @param {Number} targetSize - Target queue size to maintain
+ */
+function startBackgroundLocationPreloading(targetSize = 20) {
+    if (isPreloadingLocations) return; // Already running
+    
+    isPreloadingLocations = true;
+    console.log("Starting background location preloading");
+    
+    // Background process to keep queue filled
+    async function fillQueue() {
+        // If queue is already full enough, wait and check again later
+        if (locationQueue.length >= targetSize) {
+            setTimeout(fillQueue, 1000);
+            return;
+        }
+        
+        try {
+            // Generate a new location
+            const location = await generateRandomLocation();
+            locationQueue.push(location);
+            
+            console.log(`Added location to queue. Queue size: ${locationQueue.length}/${targetSize}`);
+            
+            // Continue filling queue until target is reached
+            if (isPreloadingLocations) {
+                // Use setTimeout to avoid blocking
+                setTimeout(fillQueue, 100);
+            }
+        } catch (error) {
+            console.warn("Error generating location for queue:", error);
+            // Try again after a delay
+            setTimeout(fillQueue, 2000);
+        }
+    }
+    
+    // Start the background process
+    setTimeout(fillQueue, 0);
+}
+
+/**
+ * Get next location from queue or generate a new one if queue is empty
+ * @returns {Promise<Object>} - Location object
+ */
+async function getNextLocation() {
+    if (locationQueue.length > 0) {
+        console.log(`Using location from queue. Remaining: ${locationQueue.length-1}`);
+        return locationQueue.shift();
+    } else {
+        console.log("Queue empty, generating new location on demand");
+        return generateRandomLocation();
+    }
+}
 
 /**
  * Initialize the application
@@ -29,6 +86,9 @@ function initApp() {
     
     // Create viewers
     createViewers();
+    
+    // Start background location preloading
+    startBackgroundLocationPreloading(20);
     
     // Check if File System Access API is supported
     const selectDirectoryBtn = document.getElementById('select-directory-btn');
@@ -137,8 +197,8 @@ async function generateNewViews() {
         // Show loading message
         showLoading('Generating drone views with virtual object...');
         
-        // Generate a random location
-        currentLocation = await generateRandomLocation();
+        // Get location from queue or generate a new one
+        currentLocation = await getNextLocation();
         
         // Location selected
         
@@ -549,11 +609,10 @@ async function generateDataset() {
             // Update ETA display
             etaElement.textContent = `ETA: ${etaMinutes}m ${etaSeconds}s`;
             
-            // Pre-generate the next location if not the last iteration
-            if (i < count - 1 && i % 50 !== 49) {  // Skip if we're about to recreate viewers
-                showLoading('Preparing next location...');
-                currentLocation = await generateRandomLocation();
-                hideLoading();
+            // Increase the target queue size if it's running low
+            if (locationQueue.length < 5 && i < count - 1) {
+                // Increase queue target size without blocking
+                startBackgroundLocationPreloading(20);
             }
         }
         
@@ -646,7 +705,13 @@ function waitForSceneToLoad(viewer) {
 }
 
 // Export public functions
-export { initApp, generateNewViews, handleExport, generateDataset };
+export { 
+    initApp, 
+    generateNewViews, 
+    handleExport, 
+    generateDataset,
+    startBackgroundLocationPreloading
+};
 
 // Initialize the application when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {

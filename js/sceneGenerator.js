@@ -497,9 +497,10 @@ class CameraView {
     
     /**
      * Wait for the scene to fully load (tiles, imagery)
-     * @returns {Promise} Promise that resolves when loaded
+     * @param {Number} timeout - Optional timeout in milliseconds (default: 3000)
+     * @returns {Promise} Promise that resolves when loaded or timeout is reached
      */
-    waitForLoad() {
+    waitForLoad(timeout = 3000) {
         return new Promise(resolve => {
             if (!this.viewer || !this.viewer.scene) {
                 resolve(); // No viewer, resolve immediately
@@ -509,9 +510,12 @@ class CameraView {
             const scene = this.viewer.scene;
             const globe = scene.globe;
             
-            // Force a higher detail level for better imagery quality
+            // Force a higher detail level but balanced for performance
             if (globe) {
-                globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
+                globe.maximumScreenSpaceError = 2.0; // Higher value = faster loading but lower quality
+                
+                // Limit tile cache size to prevent memory leaks
+                globe.tileCacheSize = 100; // Add a cache size limit to prevent excessive memory usage
             }
 
             // If scene is already loaded, resolve immediately
@@ -520,20 +524,46 @@ class CameraView {
                 return;
             }
             
+            // Set a timeout to prevent hanging
+            const timeoutId = setTimeout(() => {
+                if (!hasResolved) {
+                    console.log("Scene load timeout reached - continuing anyway");
+                    cleanup();
+                    resolve();
+                }
+            }, timeout);
+            
             // Track if we've resolved yet
             let hasResolved = false;
             let animationFrameId = null;
+            let removeListener = null;
+            
+            // Cleanup function to prevent memory leaks
+            const cleanup = () => {
+                hasResolved = true;
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+                if (removeListener) {
+                    removeListener();
+                    removeListener = null;
+                }
+                clearTimeout(timeoutId);
+            };
             
             // Use requestAnimationFrame to check tile loading status
-            // This avoids potential recursion issues with scene.render()
             const checkTilesLoaded = () => {
-                // If already resolved, stop checking
-                if (hasResolved) return;
+                // If already resolved or viewer destroyed, clean up
+                if (hasResolved || !this.viewer || !this.viewer.scene) {
+                    cleanup();
+                    resolve();
+                    return;
+                }
                 
                 // Check if tiles are loaded
                 if (globe.tilesLoaded) {
-                    hasResolved = true;
-                    cancelAnimationFrame(animationFrameId);
+                    cleanup();
                     resolve();
                     return;
                 }
@@ -547,11 +577,9 @@ class CameraView {
             
             // Also listen to the tileLoadProgressEvent as a backup
             if (globe.tileLoadProgressEvent) {
-                const removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
+                removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
                     if (!hasResolved && globe.tilesLoaded) {
-                        hasResolved = true;
-                        cancelAnimationFrame(animationFrameId);
-                        removeListener();
+                        cleanup();
                         resolve();
                     }
                 });
