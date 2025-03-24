@@ -427,14 +427,14 @@ async function generateDataset() {
             viewer1.scene.globe.preloadSiblings = true;
             viewer2.scene.globe.preloadSiblings = true;
             
-            // Make sure the rendering has actually completed with high-quality imagery
+            // Optimized image quality enhancement with a timeout
             await new Promise(resolve => {
                 // Show feedback about what's happening
                 showLoading('Enhancing image quality...');
                 
-                // Set higher quality imagery
-                viewer1.scene.globe.maximumScreenSpaceError = 0.5; // Very high detail
-                viewer2.scene.globe.maximumScreenSpaceError = 0.5;
+                // Set higher quality imagery with slightly reduced demands
+                viewer1.scene.globe.maximumScreenSpaceError = 0.8; // Good balance between quality and speed
+                viewer2.scene.globe.maximumScreenSpaceError = 0.8;
                 
                 // Force imagery to load at highest available resolution
                 viewer1.scene.globe.preloadSiblings = true;
@@ -444,10 +444,19 @@ async function generateDataset() {
                 viewer1.scene.render();
                 viewer2.scene.render();
                 
+                // Set a maximum timeout to prevent hanging
+                const timeoutId = setTimeout(() => {
+                    console.log("Image quality enhancement timeout reached, continuing anyway");
+                    if (animationFrameId) {
+                        cancelAnimationFrame(animationFrameId);
+                    }
+                    resolve();
+                }, 3000); // 3 second max wait
+                
                 // Counter to track number of frames where tilesLoaded is true
                 // We want to make sure tiles stay loaded for multiple frames
                 let stableFrameCount = 0;
-                const requiredStableFrames = 10;
+                const requiredStableFrames = 5; // Reduced from 10 to 5
                 
                 // To avoid recursion, we'll use requestAnimationFrame instead of directly calling render
                 let animationFrameId = null;
@@ -460,6 +469,7 @@ async function generateDataset() {
                         
                         if (stableFrameCount >= requiredStableFrames) {
                             // Resolve the promise
+                            clearTimeout(timeoutId);
                             resolve();
                             return;
                         }
