@@ -133,12 +133,10 @@ const VIEWER_SETTINGS1 = {
     fullscreenButton: false
 };
 const VIEWER_SETTINGS2 = {
-    baseLayer: Cesium.ImageryLayer.fromProviderAsync(
-        Cesium.ArcGisMapServerImageryProvider.fromUrl(
-            'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
-            { enablePickFeatures: false }
-        )
-    ),
+    imageryProvider: new Cesium.ArcGisMapServerImageryProvider({
+        url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+        enablePickFeatures: false
+    }),
     infoBox: false,
     selectionIndicator: false,
     animation: false,
@@ -150,13 +148,6 @@ const VIEWER_SETTINGS2 = {
     homeButton: false,
     fullscreenButton: false
 }
-// Overpass API endpoints
-const OVERPASS_API_ENDPOINTS = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.private.coffee/api/interpreter',
-    'https://overpass.osm.jp/api/interpreter'
-];
-
 // Export the constants
 export { 
     CESIUM_TOKEN, 
@@ -166,5 +157,4 @@ export {
     VIEW_SETTINGS,
     VIEWER_SETTINGS1,
     VIEWER_SETTINGS2,
-    OVERPASS_API_ENDPOINTS
 };
