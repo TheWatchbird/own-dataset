@@ -4,6 +4,10 @@ const numCPUs = require('os').cpus().length;
 const path = require('path');
 const fs = require('fs').promises;
 
+// Set NVIDIA environment variables
+process.env.NVIDIA_VISIBLE_DEVICES = 'all';
+process.env.CUDA_VISIBLE_DEVICES = '0';
+
 // Parse command line arguments
 const args = process.argv.slice(2);
 const CONFIG = {
@@ -59,14 +63,105 @@ async function runBrowser(workerId) {
         headless: CONFIG.headless,
         args: [
           '--no-sandbox',
-          '--enable-experimental-web-platform-features', // Enable File System Access API
+          '--enable-experimental-web-platform-features',
           `--allow-file-access-from-files`,
           `--allow-file-access`,
+          // GPU Acceleration flags
+          '--enable-gpu',
+          '--enable-webgl',
+          '--ignore-gpu-blocklist',
+          '--disable-gpu-driver-bug-workarounds',
+          '--enable-gpu-rasterization',
+          '--enable-zero-copy',
+          '--enable-accelerated-video-decode',
+          '--enable-native-gpu-memory-buffers',
+          '--enable-hardware-overlays',
+          '--enable-features=Vulkan',
+          '--use-vulkan',
+          '--enable-features=VaapiVideoDecoder',
+          '--force-gpu-rasterization',
+          // Headless mode configuration
+          '--headless=new',
+          '--disable-dev-shm-usage',
+          '--use-gl=angle',
+          '--use-angle=default',
+          '--window-size=1920,1080',
+          '--start-maximized',
+          '--hide-scrollbars',
         ],
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
         permissions: ['clipboard-read', 'clipboard-write']
       });
       
+      // Set environment variables for GPU
+      process.env.LIBGL_ALWAYS_SOFTWARE = '0'; // Prevent software rendering
+      process.env.LIBGL_DEBUG = 'verbose'; // Debug OpenGL
+      process.env.ANGLE_DEFAULT_PLATFORM = 'vulkan'; // Use Vulkan backend for ANGLE
+      
       const page = await context.newPage();
+
+      // More detailed GPU check
+      const gpuInfo = await page.evaluate(() => {
+        function getWebGLInfo(type) {
+          const canvas = document.createElement('canvas');
+          const gl = canvas.getContext(type, {
+            powerPreference: 'high-performance',
+            failIfMajorPerformanceCaveat: false,
+            antialias: false,
+            alpha: false,
+          });
+          
+          if (!gl) return { error: `${type} not supported` };
+          
+          const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+          return {
+            vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+            renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+            version: gl.getParameter(gl.VERSION),
+            shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+            extensions: gl.getSupportedExtensions(),
+            maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+            maxViewportDims: gl.getParameter(gl.MAX_VIEWPORT_DIMS),
+            angleInfo: window.navigator.userAgent.match(/ANGLE \((.*?)\)/)?.[1] || 'Not available'
+          };
+        }
+        
+        return {
+          webgl1: getWebGLInfo('webgl'),
+          webgl2: getWebGLInfo('webgl2'),
+          gpu: {
+            vendor: navigator.vendor,
+            hardwareConcurrency: navigator.hardwareConcurrency,
+            deviceMemory: navigator.deviceMemory,
+            platform: navigator.platform,
+            userAgent: navigator.userAgent
+          }
+        };
+      });
+      console.log(`Worker ${workerId} Detailed GPU Info:`, JSON.stringify(gpuInfo, null, 2));
+
+      // Check if WebGL is actually working
+      const isWebGLWorking = await page.evaluate(() => {
+        try {
+          const canvas = document.createElement('canvas');
+          const gl = canvas.getContext('webgl2');
+          if (!gl) return false;
+          
+          // Try to render something
+          canvas.width = canvas.height = 1;
+          gl.clearColor(1, 0, 0, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          const pixels = new Uint8Array(4);
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+          
+          return pixels[0] === 255; // Should be red (255, 0, 0, 255)
+        } catch (e) {
+          console.error('WebGL test failed:', e);
+          return false;
+        }
+      });
+      console.log(`Worker ${workerId} WebGL Working:`, isWebGLWorking);
 
       // Single console handler
       page.on('console', msg => {
@@ -82,6 +177,23 @@ async function runBrowser(workerId) {
       // Auto-accept all permission dialogs
       page.on('dialog', async dialog => {
         await dialog.accept();
+      });
+
+      // Enable WebGL in the page
+      await page.addInitScript(() => {
+        // Force high-performance GPU
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl2', { 
+          powerPreference: 'high-performance',
+          desynchronized: true,
+          preserveDrawingBuffer: false,
+          antialias: false // Disable antialiasing for performance
+        });
+        if (gl) {
+          // Clean up
+          gl.getExtension('WEBGL_lose_context')?.loseContext();
+          canvas.remove();
+        }
       });
 
       console.log(`Worker ${workerId}: Navigating to ${CONFIG.url}`);
