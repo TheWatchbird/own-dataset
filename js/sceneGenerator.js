@@ -86,7 +86,7 @@ async function findNearestBuilding(lat, lon) {
         }
 
         // Increase search radius for next attempt
-        radius += 2000; // Increase by 2km per attempt
+        radius += 4000; // Increase by 2km per attempt
     }
 
     throw new Error("No buildings found after expanding search with all mirrors.");

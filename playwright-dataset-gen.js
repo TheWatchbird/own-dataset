@@ -321,29 +321,13 @@ async function runBrowser(workerId) {
         }
       });
 
-      // Wait for completion with increased timeout and progress logging
-      console.log(`Worker ${workerId}: Waiting for generation to complete...`);
-      await page.waitForFunction(() => {
-        const progress = document.getElementById('dataset-progress-count');
-        const total = document.getElementById('dataset-progress-total');
-        if (!progress || !total) return false;
-        
-        const current = parseInt(progress.textContent);
-        const target = parseInt(total.textContent);
-        
-        if (current > 0) {
-          const eta = Math.round((target - current) * (Date.now() - window.startTime) / (current * 60000));
-          console.log(`Progress: ${current}/${target} ETA: ${eta}m`);
-        } else if (!window.startTime) {
-          window.startTime = Date.now();
-        }
-        
-        return current === target;
-      }, { 
-        timeout: 0, // No timeout
-        polling: 1000 // Check every second
-      });
+      // Let it run indefinitely - can be stopped manually
+      console.log(`Worker ${workerId}: Generation started - running indefinitely until stopped...`);
+      
+      // Keep the script running
+      await new Promise(() => {}); // Never resolves, keeps running until process is killed
 
+      // These lines will never be reached due to infinite promise above
       console.log(`Worker ${workerId}: Generation completed successfully`);
       await context.close();
       return true;
@@ -357,7 +341,7 @@ async function runBrowser(workerId) {
 
       retryCount++;
       if (retryCount < CONFIG.retryAttempts) {
-        const delay = Math.min(CONFIG.retryDelay * Math.pow(2, retryCount), 30000);
+        const delay = Math.min(CONFIG.retryDelay * Math.pow(2, retryCount), 60000);
         console.log(`Worker ${workerId}: Retrying in ${delay/1000} seconds...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
