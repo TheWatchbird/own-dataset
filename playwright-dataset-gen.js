@@ -14,7 +14,8 @@ const CONFIG = {
   retryDelay: 5000, // 5 seconds
   outputDir: args[1] || '/home/ubuntu/dataset-output',
   maxRetryDelay: 30000, // 30 seconds
-  progressTimeout: 120000 // 2 minutes
+  progressTimeout: 300000, // 5 minutes
+  datasetCount: 1000000 // Set to 1 million pairs
 };
 
 async function sleep(ms) {
@@ -85,7 +86,12 @@ async function runBrowser(workerId) {
 
       console.log(`Worker ${workerId}: Navigating to ${CONFIG.url}`);
       await page.goto(CONFIG.url);
-      await page.waitForLoadState('networkidle');
+
+      // Wait for initial page load with longer timeout
+      await Promise.all([
+        page.waitForLoadState('domcontentloaded', { timeout: 60000 }),
+        page.waitForSelector('#generate-dataset-btn', { timeout: 60000 })
+      ]);
 
       // Ensure output directory exists
       await fs.mkdir(CONFIG.outputDir, { recursive: true });
@@ -289,16 +295,54 @@ async function runBrowser(workerId) {
       });
 
       console.log(`Worker ${workerId}: Starting generation`);
+      await page.evaluate((count) => {
+        document.getElementById('dataset-count').value = count;
+      }, CONFIG.datasetCount);
       await page.getByText('Generate Dataset').click();
 
-      // Wait for progress
-      await page.waitForSelector('[data-progress]', { timeout: 60000 });
-      
-      // Wait for completion
+      // Wait for the dataset count input to be present and get its value
+      const totalCount = await page.$eval('#dataset-count', el => parseInt(el.value, 10));
+      console.log(`Worker ${workerId}: Generating ${totalCount} dataset pairs`);
+
+      // Add progress tracking
+      await page.evaluate(() => {
+        window.datasetProgress = {
+          count: 0,
+          total: parseInt(document.getElementById('dataset-count').value, 10)
+        };
+        
+        // Create progress elements if they don't exist
+        if (!document.getElementById('dataset-progress')) {
+          const progressSpan = document.createElement('span');
+          progressSpan.id = 'dataset-progress';
+          progressSpan.style.display = 'inline-block';
+          progressSpan.innerHTML = `Progress: <span id="dataset-progress-count">0</span>/<span id="dataset-progress-total">${window.datasetProgress.total}</span>`;
+          document.querySelector('.dataset-controls').appendChild(progressSpan);
+        }
+      });
+
+      // Wait for completion with increased timeout and progress logging
+      console.log(`Worker ${workerId}: Waiting for generation to complete...`);
       await page.waitForFunction(() => {
-        const progress = document.querySelector('[data-progress]');
-        return progress && progress.textContent.includes('100%');
-      }, { timeout: 0 });
+        const progress = document.getElementById('dataset-progress-count');
+        const total = document.getElementById('dataset-progress-total');
+        if (!progress || !total) return false;
+        
+        const current = parseInt(progress.textContent);
+        const target = parseInt(total.textContent);
+        
+        if (current > 0) {
+          const eta = Math.round((target - current) * (Date.now() - window.startTime) / (current * 60000));
+          console.log(`Progress: ${current}/${target} ETA: ${eta}m`);
+        } else if (!window.startTime) {
+          window.startTime = Date.now();
+        }
+        
+        return current === target;
+      }, { 
+        timeout: 0, // No timeout
+        polling: 1000 // Check every second
+      });
 
       console.log(`Worker ${workerId}: Generation completed successfully`);
       await context.close();
