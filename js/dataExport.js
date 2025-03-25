@@ -231,6 +231,7 @@ function exportDataset(
                         y: point.point3D.y, 
                         z: point.point3D.z
                     },
+                    pointType: point.pointType || 'center', // Include point type (corner, mid, center)
                     view1: {
                         // Convert to relative coordinates (0-1)
                         x: point.view1Pos.x / view1Width,
@@ -241,8 +242,20 @@ function exportDataset(
                         // Get the original viewer2 coordinates (not the adjusted ones used for overlay)
                         x: (point.view2Pos.x - viewer1.canvas.clientWidth) / view2Width,
                         y: point.view2Pos.y / view2Height
-                    }
-                }))
+                    },
+                    isCorrect: point.isCorrect,
+                    isForcedMatch: point.isForcedMatch
+                })),
+                virtualObjectInfo: matchingPoints.length > 1 ? {
+                    type: "rectangle",
+                    dimensions: {
+                        width: 50, // Width in meters
+                        length: 50, // Length in meters
+                        height: 2   // Height in meters
+                    },
+                    pointCount: matchingPoints.length,
+                    pointTypes: matchingPoints.map(point => point.pointType || "unknown")
+                } : undefined
             };
             
             // Add the provided images - either externally provided or captured now
@@ -411,7 +424,8 @@ function exportDataset(
                             location: dataset.metadata.location,
                             timestamp: dataset.metadata.timestamp,
                             distance: dataset.metadata.distance,
-                            cameras: dataset.metadata.cameras
+                            cameras: dataset.metadata.cameras,
+                            virtualObjectInfo: dataset.virtualObjectInfo
                         },
                         matchingPoints: dataset.matchingPoints
                     };
@@ -566,7 +580,8 @@ function exportDatasetCollection() {
                                 location: dataset.metadata.location,
                                 timestamp: dataset.metadata.timestamp,
                                 distance: dataset.metadata.distance,
-                                cameras: dataset.metadata.cameras
+                                cameras: dataset.metadata.cameras,
+                                virtualObjectInfo: dataset.virtualObjectInfo
                             },
                             matchingPoints: dataset.matchingPoints
                         };

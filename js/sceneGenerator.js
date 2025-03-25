@@ -182,16 +182,116 @@ function generateCameraPositions(location) {
     console.log("Setting up virtual object at location:", location);
     
     // Place a virtual object 10 meters above ground for better visibility
-    const virtualObject = Cesium.Cartesian3.fromDegrees(
+    // Create a 50x50m square with 2m height with 9 measurement points
+    // (4 corners, 4 midpoints on sides, and 1 center point)
+    
+    // Center point of the object
+    const virtualObjectCenter = Cesium.Cartesian3.fromDegrees(
         location.lon,
         location.lat,
         location.height + 10 // 10m above ground for better visibility
     );
+    
+    // Calculate the size of the object (50 meters in length/width)
+    // 1 degree of latitude is approximately 111km at the equator
+    const metersToDegreesLat = 50 / 111000; // 50m in degrees latitude
+    const metersToDegreesLon = 50 / (111000 * Math.cos(Cesium.Math.toRadians(location.lat))); // 50m in degrees longitude (adjusted for latitude)
+    
+    // Define the height of the object (2m)
+    const objectHeight = 2;
+    
+    // Create an array to hold all the points of the virtual object
+    const virtualObjectPoints = [];
+    
+    // 1. Add the center point
+    virtualObjectPoints.push({
+        position: virtualObjectCenter,
+        type: 'center'
+    });
+    
+    // 2. Add the 4 corner points (top surface)
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon - metersToDegreesLon/2, 
+            location.lat - metersToDegreesLat/2, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'corner_sw'
+    });
+    
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon + metersToDegreesLon/2, 
+            location.lat - metersToDegreesLat/2, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'corner_se'
+    });
+    
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon + metersToDegreesLon/2, 
+            location.lat + metersToDegreesLat/2, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'corner_ne'
+    });
+    
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon - metersToDegreesLon/2, 
+            location.lat + metersToDegreesLat/2, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'corner_nw'
+    });
+    
+    // 3. Add the 4 midpoints on the sides (top surface)
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon, 
+            location.lat - metersToDegreesLat/2, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'mid_south'
+    });
+    
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon + metersToDegreesLon/2, 
+            location.lat, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'mid_east'
+    });
+    
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon, 
+            location.lat + metersToDegreesLat/2, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'mid_north'
+    });
+    
+    virtualObjectPoints.push({
+        position: Cesium.Cartesian3.fromDegrees(
+            location.lon - metersToDegreesLon/2, 
+            location.lat, 
+            location.height + 10 + objectHeight
+        ),
+        type: 'mid_west'
+    });
 
+    // For backward compatibility, we'll use the center position as the main virtual object
+    const virtualObject = virtualObjectCenter;
+    
     console.log("Virtual object placed at:", {
         lon: location.lon,
         lat: location.lat,
-        height: location.height + 10
+        height: location.height + 10,
+        sizeMeters: { width: 50, height: 2, length: 50 },
+        pointCount: virtualObjectPoints.length
     });
 
     // Camera 1: Position from one angle - use more constrained parameters
@@ -252,6 +352,7 @@ function generateCameraPositions(location) {
 
     return {
         virtualObject,
+        virtualObjectPoints,
         camera1: {
             position: camera1Position,
             orientation: camera1Direction
@@ -642,9 +743,13 @@ async function setupCameraViews(viewer1, viewer2, location) {
     // Generate camera positions with a virtual object to track
     const sceneSetup = generateCameraPositions(location);
     
-    // Add a visible marker at the virtual object position
+    // Create arrays to track all entities for later reference
+    const entities1 = [];
+    const entities2 = [];
+    
+    // Add a visible marker at the main virtual object position (center)
     const objectEntity = viewer1.entities.add({
-        id: "virtualObject",
+        id: "virtualObject_center",
         position: sceneSetup.virtualObject,
         point: {
             pixelSize: 8,
@@ -654,10 +759,11 @@ async function setupCameraViews(viewer1, viewer2, location) {
             disableDepthTestDistance: Number.POSITIVE_INFINITY
         }
     });
+    entities1.push(objectEntity);
     
     // Also add to second viewer
     const objectEntity2 = viewer2.entities.add({
-        id: "virtualObject",
+        id: "virtualObject_center",
         position: sceneSetup.virtualObject,
         point: {
             pixelSize: 8,
@@ -667,6 +773,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
             disableDepthTestDistance: Number.POSITIVE_INFINITY
         }
     });
+    entities2.push(objectEntity2);
     
     // Add a small ground reference point
     const groundReference = viewer1.entities.add({
@@ -680,6 +787,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
             outlineColor: Cesium.Color.BLACK
         }
     });
+    entities1.push(groundReference);
     
     const groundReference2 = viewer2.entities.add({
         position: Cesium.Cartesian3.fromDegrees(location.lon, location.lat, location.height),
@@ -691,6 +799,54 @@ async function setupCameraViews(viewer1, viewer2, location) {
             outline: true,
             outlineColor: Cesium.Color.BLACK
         }
+    });
+    entities2.push(groundReference2);
+    
+    // Add all the virtual object points as entities with different colors
+    // based on their type
+    sceneSetup.virtualObjectPoints.forEach(pointObj => {
+        if (pointObj.type === 'center') {
+            // We already added the center point
+            return;
+        }
+        
+        // Pick color based on point type
+        let color;
+        if (pointObj.type.startsWith('corner')) {
+            color = Cesium.Color.RED;
+        } else if (pointObj.type.startsWith('mid')) {
+            color = Cesium.Color.GREEN;
+        } else {
+            color = Cesium.Color.BLUE;
+        }
+        
+        // Add to first viewer
+        const entity1 = viewer1.entities.add({
+            id: `virtualObject_${pointObj.type}`,
+            position: pointObj.position,
+            point: {
+                pixelSize: 6,
+                color: color,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 1,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+        entities1.push(entity1);
+        
+        // Add to second viewer
+        const entity2 = viewer2.entities.add({
+            id: `virtualObject_${pointObj.type}`,
+            position: pointObj.position,
+            point: {
+                pixelSize: 6,
+                color: color,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 1,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+        entities2.push(entity2);
     });
     
     // Calculate the distance between the two camera positions (for stats)
@@ -788,56 +944,65 @@ async function setupCameraViews(viewer1, viewer2, location) {
     viewer1.scene.render();
     viewer2.scene.render();
     
-    // Project the 3D position to 2D screen coordinates in both views
-    const view1Pos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(
-        viewer1.scene, 
-        sceneSetup.virtualObject
-    );
-    
-    const view2Pos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(
-        viewer2.scene, 
-        sceneSetup.virtualObject
-    );
-    
-    // Project 3D points to 2D coordinates
-    
-    // Get the correct width of the second viewer's viewport
+    // Create matching points for all the virtual object points
+    const matchingPoints = [];
     const view2Width = viewer2.canvas.clientWidth;
     
-    // For the visualization overlay, we need to adjust the second viewer's coordinates
-    // to account for the split screen layout where the second view is positioned
-    // to the right of the first view
-    const adjustedView2Pos = view2Pos ? { 
-        x: view2Pos.x + viewer1.canvas.clientWidth, // Add full width of first viewer
-        y: view2Pos.y
-    } : null;
+    // Project each of the 9 points to screen coordinates
+    for (const pointObj of sceneSetup.virtualObjectPoints) {
+        // Project the 3D position to 2D screen coordinates in both views
+        const view1Pos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(
+            viewer1.scene, 
+            pointObj.position
+        );
+        
+        const view2Pos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(
+            viewer2.scene, 
+            pointObj.position
+        );
+        
+        // For the visualization overlay, adjust the second viewer's coordinates
+        // to account for the split screen layout
+        const adjustedView2Pos = view2Pos ? { 
+            x: view2Pos.x + viewer1.canvas.clientWidth, // Add full width of first viewer
+            y: view2Pos.y
+        } : null;
+        
+        // Check if this point is visible in both views
+        const isInView1 = view1Pos && isInViewport(view1Pos, viewer1.canvas.width/2, viewer1.canvas.height);
+        const isInView2 = view2Pos && isInViewport(view2Pos, viewer2.canvas.width/2, viewer2.canvas.height);
+        
+        // Create the matching point data structure using the direct projections
+        const matchingPoint = {
+            point3D: pointObj.position,
+            pointType: pointObj.type,
+            view1Pos: view1Pos,
+            view2Pos: adjustedView2Pos,
+            isCorrect: true,
+            // Note if either point is outside the standard viewport bounds
+            isForcedMatch: !isInView1 || !isInView2
+        };
+        
+        matchingPoints.push(matchingPoint);
+    }
     
-    // Adjust view2 coordinates for overlay visualization
+    // At least one point must be valid for the pairing to be valid
+    const isValid = matchingPoints.some(point => 
+        point.view1Pos && point.view2Pos && 
+        !point.isForcedMatch);
     
-    // Create the matching point data structure using the direct projections
-    const matchingPoint = {
-        point3D: sceneSetup.virtualObject,
-        view1Pos: view1Pos,
-        view2Pos: adjustedView2Pos,
-        isCorrect: true,
-        // Note if either point is outside the standard viewport bounds
-        isForcedMatch: !view1Pos || !view2Pos || 
-            !isInViewport(view1Pos, viewer1.canvas.width/2, viewer1.canvas.height) ||
-            !isInViewport(view2Pos, viewer2.canvas.width/2, viewer2.canvas.height)
-    };
-    
-    const matchingPoints = [matchingPoint];
-    const isValid = view1Pos && view2Pos;
+    // Calculate how many points are visible in both views
+    const visiblePoints = matchingPoints.filter(point => 
+        point.view1Pos && point.view2Pos && !point.isForcedMatch).length;
     
     // Create debug info
     const debugInfo = {
         duration: 0,
         totalPoints: matchingPoints.length,
-        validPoints: isValid ? 1 : 0,
-        inView1: view1Pos ? true : false,
-        inView2: view2Pos ? true : false,
-        finalView1Pos: view1Pos ? { x: Math.round(view1Pos.x), y: Math.round(view1Pos.y) } : null,
-        finalView2Pos: view2Pos ? { x: Math.round(view2Pos.x), y: Math.round(view2Pos.y) } : null
+        validPoints: visiblePoints,
+        visiblePointTypes: matchingPoints
+            .filter(p => p.view1Pos && p.view2Pos && !p.isForcedMatch)
+            .map(p => p.pointType)
     };
     
     // Helper function to check if a point is within viewport bounds
@@ -862,7 +1027,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
     const view2Heading = Cesium.Math.toDegrees(viewer2.camera.heading);
     const view2Pitch = Cesium.Math.toDegrees(viewer2.camera.pitch);
     
-    // Get geographic coordinates of the virtual object
+    // Get geographic coordinates of the central virtual object point
     const objectCart = Cesium.Cartographic.fromCartesian(sceneSetup.virtualObject);
     const objectLat = Cesium.Math.toDegrees(objectCart.latitude);
     const objectLon = Cesium.Math.toDegrees(objectCart.longitude);
@@ -871,7 +1036,9 @@ async function setupCameraViews(viewer1, viewer2, location) {
     console.log("Virtual object coordinates:", {
         lat: objectLat,
         lon: objectLon,
-        height: objectHeight
+        height: objectHeight,
+        totalPoints: matchingPoints.length,
+        visiblePoints: visiblePoints
     });
     
     console.log("Camera setup after zoomTo:", {
@@ -891,15 +1058,16 @@ async function setupCameraViews(viewer1, viewer2, location) {
     // Return complete setup information
     return {
         virtualObject: sceneSetup.virtualObject,
+        virtualObjectPoints: sceneSetup.virtualObjectPoints,
         matchingPoints,
         isValid,
         entities: {
-            view1: [objectEntity, groundReference],
-            view2: [objectEntity2, groundReference2]
+            view1: entities1,
+            view2: entities2
         },
         stats: {
             location: location.name,
-            region: location.region || "Unknown Region", // Add region info to stats
+            region: location.region || "Unknown Region",
             altitude1,
             altitude2,
             distance: Math.round(distance),
@@ -910,6 +1078,13 @@ async function setupCameraViews(viewer1, viewer2, location) {
                 lon: Math.round(objectLon * 1000000) / 1000000,
                 height: Math.round(objectHeight)
             },
+            virtualObjectSize: {
+                width: 50,
+                length: 50,
+                height: 2
+            },
+            pointCount: matchingPoints.length,
+            visiblePoints: visiblePoints,
             debug: debugInfo
         }
     };
