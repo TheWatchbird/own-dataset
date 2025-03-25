@@ -181,7 +181,7 @@ async function generateRandomLocation() {
 function generateCameraPositions(location) {
     console.log("Setting up virtual object at location:", location);
     
-    // Place a virtual object 10 meters above ground for better visibility
+    // Place a virtual object 2 meters above ground
     // Create a 50x50m square with 2m height with 9 measurement points
     // (4 corners, 4 midpoints on sides, and 1 center point)
     
@@ -189,7 +189,7 @@ function generateCameraPositions(location) {
     const virtualObjectCenter = Cesium.Cartesian3.fromDegrees(
         location.lon,
         location.lat,
-        location.height + 10 // 10m above ground for better visibility
+        location.height + 2 // 2m above ground for better visibility
     );
     
     // Calculate the size of the object (50 meters in length/width)
@@ -214,7 +214,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon - metersToDegreesLon/2, 
             location.lat - metersToDegreesLat/2, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'corner_sw'
     });
@@ -223,7 +223,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon + metersToDegreesLon/2, 
             location.lat - metersToDegreesLat/2, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'corner_se'
     });
@@ -232,7 +232,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon + metersToDegreesLon/2, 
             location.lat + metersToDegreesLat/2, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'corner_ne'
     });
@@ -241,7 +241,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon - metersToDegreesLon/2, 
             location.lat + metersToDegreesLat/2, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'corner_nw'
     });
@@ -251,7 +251,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon, 
             location.lat - metersToDegreesLat/2, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'mid_south'
     });
@@ -260,7 +260,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon + metersToDegreesLon/2, 
             location.lat, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'mid_east'
     });
@@ -269,7 +269,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon, 
             location.lat + metersToDegreesLat/2, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'mid_north'
     });
@@ -278,7 +278,7 @@ function generateCameraPositions(location) {
         position: Cesium.Cartesian3.fromDegrees(
             location.lon - metersToDegreesLon/2, 
             location.lat, 
-            location.height + 10 + objectHeight
+            location.height + 2 + objectHeight
         ),
         type: 'mid_west'
     });
@@ -289,7 +289,7 @@ function generateCameraPositions(location) {
     console.log("Virtual object placed at:", {
         lon: location.lon,
         lat: location.lat,
-        height: location.height + 10,
+        height: location.height + 2,
         sizeMeters: { width: 50, height: 2, length: 50 },
         pointCount: virtualObjectPoints.length
     });
@@ -779,7 +779,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
     const groundReference = viewer1.entities.add({
         position: Cesium.Cartesian3.fromDegrees(location.lon, location.lat, location.height),
         cylinder: {
-            length: 10,
+            length: 2,
             topRadius: 2,
             bottomRadius: 2,
             material: Cesium.Color.YELLOW.withAlpha(0.5),
@@ -792,7 +792,7 @@ async function setupCameraViews(viewer1, viewer2, location) {
     const groundReference2 = viewer2.entities.add({
         position: Cesium.Cartesian3.fromDegrees(location.lon, location.lat, location.height),
         cylinder: {
-            length: 10,
+            length: 2,
             topRadius: 2,
             bottomRadius: 2,
             material: Cesium.Color.YELLOW.withAlpha(0.5),
