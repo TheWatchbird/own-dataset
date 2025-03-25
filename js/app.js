@@ -4,6 +4,7 @@
 
 import { CESIUM_TOKEN, VIEW_SETTINGS, VIEWER_SETTINGS1, VIEWER_SETTINGS2 } from './config.js';
 import { setupCameraViews, generateRandomLocation, CameraView } from './sceneGenerator.js';
+import { detectBlurryImage } from './utils.js';
 import { drawMatchingLines, showLoading, showError, hideLoading, cleanupCanvas } from './visualization.js';
 import { 
     exportDataset, 
@@ -542,6 +543,29 @@ async function generateDataset() {
             // Capture clean screenshots
             const cleanView1Image = viewer1.canvas.toDataURL('image/jpeg', 0.95);
             const cleanView2Image = viewer2.canvas.toDataURL('image/jpeg', 0.95);
+            
+            // Check if the left view (view1) is blurry before proceeding
+            showLoading('Checking image quality...');
+            const isQualityGood = await detectBlurryImage(cleanView1Image);
+            
+            if (!isQualityGood) {
+                console.warn(`Detected blurry left image in pair ${i+1}/${count}. Skipping and generating a new scene...`);
+                // Show message to user
+                showError('Skipping blurry image (approx. 3% chance)', 'warning');
+                
+                // Decrement counter to retry with a new scene
+                i--;
+                
+                // Release memory for discarded images
+                entities1.forEach(entity => entity.show = true);
+                entities2.forEach(entity => entity.show = true);
+                
+                // Allow some time for garbage collection
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Skip to next iteration
+                continue;
+            }
             
             // Restore original visibility for entities
             for (const entity of entities1) {

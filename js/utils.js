@@ -205,6 +205,193 @@ function calculateMatchQuality(matchingPoints) {
     }
 }
 
+/**
+ * Detects if an image (specifically the left view) is blurry using multiple detection techniques
+ * @param {String} imageDataUrl - The image data URL to check
+ * @returns {Promise<boolean>} - Promise resolving to true if image is clear, false if blurry
+ */
+function detectBlurryImage(imageDataUrl) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = function() {
+            // Create canvas for analysis
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Get appropriate dimensions
+            const MAX_WIDTH = 400; // Slightly larger for better accuracy
+            const scale = Math.min(1, MAX_WIDTH / img.width);
+            const width = Math.floor(img.width * scale);
+            const height = Math.floor(img.height * scale);
+            
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            // Get image data - analyze left side where blurriness tends to occur
+            const leftPartWidth = Math.floor(width * 0.35); // Left 35% of image
+            const imageData = ctx.getImageData(0, 0, leftPartWidth, height);
+            const data = imageData.data;
+            
+            // First convert entire region to grayscale for analysis
+            const grayscaleBuffer = new Uint8Array(leftPartWidth * height);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < leftPartWidth; x++) {
+                    const idx = (y * leftPartWidth + x) * 4;
+                    // Standard grayscale conversion weights
+                    grayscaleBuffer[y * leftPartWidth + x] = 
+                        Math.round(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
+                }
+            }
+            
+            // METHOD 1: Variance-based detection (statistical approach)
+            let variance = calculateVariance(grayscaleBuffer, leftPartWidth, height);
+            
+            // METHOD 2: Edge-based detection using Laplacian filter
+            let edgeScore = detectEdges(grayscaleBuffer, leftPartWidth, height);
+            
+            // METHOD 3: Block-based detection - analyze different regions
+            // Divide the left region into 4 blocks and calculate the best score
+            const blockScores = analyzeImageBlocks(grayscaleBuffer, leftPartWidth, height, 2, 2);
+            
+            // Determine if image is blurry using all methods
+            const varianceThreshold = 150; // Higher variance = more detail
+            const edgeThreshold = 10;      // Higher edge score = more detail
+            const blockThreshold = 18;     // Higher block score = more detail
+            
+            const isBlurryByVariance = variance < varianceThreshold;
+            const isBlurryByEdges = edgeScore < edgeThreshold;
+            const isBlurryByBlocks = blockScores.maxScore < blockThreshold;
+            
+            // Combined decision - an image is blurry if at least 2 methods say so
+            const blurCount = (isBlurryByVariance ? 1 : 0) + 
+                             (isBlurryByEdges ? 1 : 0) + 
+                             (isBlurryByBlocks ? 1 : 0);
+            const isBlurry = blurCount >= 2;
+            
+            // Log the results
+            console.log(`Blur detection results:
+- Variance: ${variance.toFixed(2)} (threshold: ${varianceThreshold}, blurry: ${isBlurryByVariance})
+- Edge Score: ${edgeScore.toFixed(2)} (threshold: ${edgeThreshold}, blurry: ${isBlurryByEdges}) 
+- Block Score: ${blockScores.maxScore.toFixed(2)} (threshold: ${blockThreshold}, blurry: ${isBlurryByBlocks})
+- FINAL RESULT: ${isBlurry ? 'BLURRY (SKIPPING)' : 'CLEAR (KEEPING)'}`);
+            
+            // Return true if image is clear, false if blurry
+            resolve(!isBlurry);
+        };
+        
+        img.onerror = function() {
+            console.error("Error loading image for blur detection");
+            resolve(true); // Default to accepting image on error
+        };
+        
+        img.src = imageDataUrl;
+    });
+    
+    // Helper function to calculate variance (measure of detail)
+    function calculateVariance(grayscale, width, height) {
+        let sum = 0;
+        let squareSum = 0;
+        let count = width * height;
+        
+        // Calculate mean and mean of squares
+        for (let i = 0; i < count; i++) {
+            sum += grayscale[i];
+            squareSum += grayscale[i] * grayscale[i];
+        }
+        
+        const mean = sum / count;
+        const variance = (squareSum / count) - (mean * mean);
+        return variance;
+    }
+    
+    // Helper function to detect edges using a Laplacian filter
+    function detectEdges(grayscale, width, height) {
+        let edgeSum = 0;
+        let count = 0;
+        
+        // Skip the border pixels
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const center = grayscale[y * width + x];
+                
+                // 3x3 Laplacian kernel (approximation)
+                const top = grayscale[(y - 1) * width + x];
+                const bottom = grayscale[(y + 1) * width + x];
+                const left = grayscale[y * width + (x - 1)];
+                const right = grayscale[y * width + (x + 1)];
+                
+                // Calculate edge response using a Laplacian approximation 
+                // (center pixel * 4 - surrounding pixels)
+                const laplacian = Math.abs(4 * center - top - bottom - left - right);
+                
+                edgeSum += laplacian;
+                count++;
+            }
+        }
+        
+        return edgeSum / count;
+    }
+    
+    // Helper function to analyze image blocks
+    function analyzeImageBlocks(grayscale, width, height, blocksX, blocksY) {
+        let scores = [];
+        const blockWidth = Math.floor(width / blocksX);
+        const blockHeight = Math.floor(height / blocksY);
+        
+        for (let blockY = 0; blockY < blocksY; blockY++) {
+            for (let blockX = 0; blockX < blocksX; blockX++) {
+                let blockSum = 0;
+                let blockCount = 0;
+                
+                const startX = blockX * blockWidth;
+                const startY = blockY * blockHeight;
+                const endX = startX + blockWidth;
+                const endY = startY + blockHeight;
+                
+                // Skip the border pixels within each block to avoid edge effects
+                for (let y = Math.max(1, startY); y < Math.min(endY, height - 1); y++) {
+                    for (let x = Math.max(1, startX); x < Math.min(endX, width - 1); x++) {
+                        const center = grayscale[y * width + x];
+                        
+                        // Simple edge detection within block
+                        const top = grayscale[(y - 1) * width + x];
+                        const bottom = grayscale[(y + 1) * width + x];
+                        const left = grayscale[y * width + (x - 1)];
+                        const right = grayscale[y * width + (x + 1)];
+                        
+                        // Calculate edge strength
+                        const edgeStrength = 
+                            Math.abs(center - top) + 
+                            Math.abs(center - bottom) + 
+                            Math.abs(center - left) + 
+                            Math.abs(center - right);
+                        
+                        blockSum += edgeStrength;
+                        blockCount++;
+                    }
+                }
+                
+                const blockScore = blockCount > 0 ? blockSum / blockCount : 0;
+                scores.push({
+                    x: blockX,
+                    y: blockY,
+                    score: blockScore
+                });
+            }
+        }
+        
+        // Sort blocks by score
+        scores.sort((a, b) => b.score - a.score);
+        
+        return {
+            blocks: scores,
+            maxScore: scores.length > 0 ? scores[0].score : 0,
+            avgScore: scores.reduce((sum, block) => sum + block.score, 0) / scores.length
+        };
+    }
+}
+
 // Export utility functions
 export { 
     calculateOrientationToTarget,
@@ -213,5 +400,6 @@ export {
     generateRandomPointsNear,
     isPointInViewport,
     projectPointToScreen,
-    calculateMatchQuality
+    calculateMatchQuality,
+    detectBlurryImage
 };
