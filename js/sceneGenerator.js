@@ -33,6 +33,14 @@ import {
 async function findNearestBuilding(lat, lon) {
     let radius = 1000; // Start with 1000m radius
     const maxRadius = 10000; // Limit expansion to 10km
+    
+    // List of Overpass API mirrors to try
+    const apiMirrors = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.private.coffee/api/interpreter',
+        'https://overpass.osm.jp/api/interpreter',
+        'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+    ];
 
     while (radius <= maxRadius) {
         const overpassQuery = `
@@ -42,30 +50,46 @@ async function findNearestBuilding(lat, lon) {
             );
             out center;
         `;
-        const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+        
+        // Randomize the order of mirrors to distribute load
+        const shuffledMirrors = [...apiMirrors].sort(() => Math.random() - 0.5);
+        
+        // Try each mirror until one works
+        for (const apiUrl of shuffledMirrors) {
+            const overpassUrl = `${apiUrl}?data=${encodeURIComponent(overpassQuery)}`;
 
-        try {
-            const response = await fetch(overpassUrl);
-            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-            
-            const data = await response.json();
+            try {
+                const response = await fetch(overpassUrl);
+                if (!response.ok) {
+                    console.warn(`Mirror ${apiUrl} returned status ${response.status}, trying next mirror...`);
+                    continue;
+                }
+                
+                const data = await response.json();
 
-            if (data.elements.length > 0) {
-                const nearestBuilding = data.elements[0];
-                return {
-                    lat: nearestBuilding.center?.lat || lat,
-                    lon: nearestBuilding.center?.lon || lon
-                };
+                if (data.elements.length > 0) {
+                    const nearestBuilding = data.elements[0];
+                    console.log(`Successfully used mirror: ${apiUrl}`);
+                    return {
+                        lat: nearestBuilding.center?.lat || lat,
+                        lon: nearestBuilding.center?.lon || lon
+                    };
+                }
+                
+                // If we got a valid response with zero elements, no need to try other mirrors
+                // But we successfully connected to this mirror, so break the loop
+                console.log(`No buildings found within ${radius}m radius using ${apiUrl}`);
+                break;
+            } catch (error) {
+                console.error(`Overpass API error with mirror ${apiUrl} (Radius ${radius}m):`, error);
             }
-        } catch (error) {
-            console.error(`Overpass API error (Radius ${radius}m):`, error);
         }
 
         // Increase search radius for next attempt
-        radius += 2000; // Increase by 1km per attempt
+        radius += 2000; // Increase by 2km per attempt
     }
 
-    throw new Error("No buildings found after expanding search.");
+    throw new Error("No buildings found after expanding search with all mirrors.");
 }
 
 /**
