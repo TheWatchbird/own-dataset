@@ -89,7 +89,7 @@ async function runBrowser(workerId) {
           '--start-maximized',
           '--hide-scrollbars',
         ],
-        viewport: { width: 1920, height: 1080 },
+        viewport: { width: 1280, height: 720 },
         deviceScaleFactor: 1,
         permissions: ['clipboard-read', 'clipboard-write']
       });

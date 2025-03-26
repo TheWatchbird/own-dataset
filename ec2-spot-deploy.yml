@@ -1,0 +1,239 @@
+---
+- name: Set up and run dataset generator on cheap EC2 spot instances
+  hosts: spot_instances
+  become: yes
+  vars:
+    # Configuration
+    output_dir: /home/ubuntu/dataset-output
+    shared_storage_dir: /mnt/shared_data
+    dataset_count: 1000000
+    headless_mode: true
+    instances_per_host: 2  # Adjust based on CPU cores (2 per instance is safe for c5.large)
+    
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install dependencies (optimized for headless browser)
+      apt:
+        name:
+          - git
+          - curl
+          - build-essential
+          - awscli
+          - nfs-common
+          - python3-pip
+          # Minimum Playwright dependencies
+          - libatk1.0-0
+          - libatk-bridge2.0-0
+          - libcups2
+          - libdbus-1-3
+          - libxkbcommon0
+          - libatspi2.0-0
+          - libxcomposite1
+          - libxdamage1
+          - libxfixes3
+          - libnss3
+          - libgbm1
+        state: present
+
+    - name: Install Node.js 18.x
+      block:
+        - name: Add NodeSource repository
+          shell: |
+            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+          args:
+            warn: false
+
+        - name: Install Node.js
+          apt:
+            name: nodejs
+            state: present
+
+    # Set up shared storage for combined output
+    - name: Create shared mount directory
+      file:
+        path: "{{ shared_storage_dir }}"
+        state: directory
+        mode: '0777'
+
+    - name: Mount EBS volume (if you're using an attached EBS)
+      shell: |
+        # Only mount if the volume exists and isn't already mounted
+        if [ -e /dev/nvme1n1 ] && ! mount | grep "{{ shared_storage_dir }}" > /dev/null; then
+          mkfs -t ext4 /dev/nvme1n1
+          mount /dev/nvme1n1 "{{ shared_storage_dir }}"
+          echo "/dev/nvme1n1 {{ shared_storage_dir }} ext4 defaults 0 0" >> /etc/fstab
+        fi
+      args:
+        executable: /bin/bash
+      register: mount_result
+      failed_when: false
+      changed_when: mount_result.rc == 0
+
+    # You can use EFS instead of EBS if you want a shared filesystem
+    - name: Mount EFS filesystem (if available)
+      shell: |
+        if [ ! -z "{{ efs_dns_name | default('') }}" ]; then
+          mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,timeo=600,retrans=2 \
+          {{ efs_dns_name }}:/ {{ shared_storage_dir }}
+        fi
+      args:
+        executable: /bin/bash
+      register: efs_mount
+      failed_when: false
+      changed_when: efs_mount.rc == 0
+      when: efs_dns_name is defined and efs_dns_name != ""
+
+    - name: Create instance output directory
+      file:
+        path: "{{ output_dir }}"
+        state: directory
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Clone repository
+      git:
+        repo: "{{ repo_url | default('https://github.com/yourusername/own-dataset.git') }}"
+        dest: /home/ubuntu/own-dataset
+        version: main
+      become: yes
+      become_user: ubuntu
+
+    - name: Install npm dependencies
+      npm:
+        path: /home/ubuntu/own-dataset
+        state: present
+      become: yes
+      become_user: ubuntu
+
+    - name: Install Playwright with minimal dependencies
+      shell: |
+        cd /home/ubuntu/own-dataset
+        npm install playwright
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install # Skip browser download initially
+        npx playwright install-deps chromium --dry-run # Just get list of deps
+        npx playwright install chromium
+      args:
+        warn: false
+      become: yes
+      become_user: ubuntu
+
+    - name: Copy dataset scripts to instances
+      copy:
+        src: "{{ item }}"
+        dest: "/home/ubuntu/own-dataset/"
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+      with_items:
+        - playwright-dataset-gen.js
+        - monitor.py
+
+    - name: Create S3 backup script
+      copy:
+        dest: /home/ubuntu/sync-to-s3.sh
+        content: |
+          #!/bin/bash
+          # Sync generated dataset to S3 bucket periodically
+          while true; do
+            aws s3 sync {{ output_dir }} s3://{{ s3_bucket_name }}/{{ ansible_hostname }}/ --quiet
+            echo "$(date): Synced data to S3"
+            sleep 3600
+          done
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+      when: s3_bucket_name is defined
+
+    - name: Start S3 sync process
+      shell: |
+        nohup /home/ubuntu/sync-to-s3.sh > /home/ubuntu/s3-sync.log 2>&1 &
+      become: yes
+      become_user: ubuntu
+      when: s3_bucket_name is defined
+      
+    - name: Create cleanup script to handle spot termination
+      copy:
+        dest: /home/ubuntu/handle-termination.sh
+        content: |
+          #!/bin/bash
+          # This script monitors for spot instance termination notices
+          while true; do
+            # Check for termination notice
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://169.254.169.254/latest/meta-data/spot/termination-time)
+            if [ "$HTTP_CODE" -eq 200 ]; then
+              echo "$(date): Spot instance termination notice received, syncing data..."
+              # Final sync to S3
+              aws s3 sync {{ output_dir }} s3://{{ s3_bucket_name }}/{{ ansible_hostname }}/ --quiet
+              # Kill the dataset generator
+              pkill -f playwright-dataset-gen.js
+              exit 0
+            fi
+            sleep 5
+          done
+        mode: '0755'
+        owner: ubuntu
+        group: ubuntu
+      when: s3_bucket_name is defined
+
+    - name: Start spot termination handler
+      shell: |
+        nohup /home/ubuntu/handle-termination.sh > /home/ubuntu/termination-handler.log 2>&1 &
+      become: yes
+      become_user: ubuntu
+      when: s3_bucket_name is defined
+
+    - name: Configure browser to optimize for headless performance
+      copy:
+        dest: /home/ubuntu/own-dataset/browser-config.js
+        content: |
+          // Performance optimizations for headless WebGL
+          module.exports = {
+            additionalArgs: [
+              '--disable-dev-shm-usage',
+              '--disable-gpu-driver-bug-workarounds',
+              '--disable-features=IsolateOrigins',
+              '--disable-site-isolation-trials',
+              '--no-sandbox',
+              '--disable-web-security',
+              '--disable-extensions',
+              '--js-flags="--max-old-space-size=4096"',
+              '--use-gl=swiftshader', // Software rendering, more compatible
+              '--headless=new'
+            ],
+            // Use minimal viewport size to reduce memory usage
+            viewport: { width: 800, height: 600 }
+          };
+        mode: '0644'
+        owner: ubuntu
+        group: ubuntu
+
+    - name: Launch dataset generator with optimized settings
+      shell: |
+        cd /home/ubuntu/own-dataset
+        # Set up virtual display for headless browser
+        export DISPLAY=:99
+        
+        # Run with increased node memory
+        NODE_OPTIONS="--max-old-space-size=2048" \
+        node playwright-dataset-gen.js {{ instances_per_host }} --headless {{ output_dir }} > /home/ubuntu/dataset-gen.log 2>&1 &
+        
+        echo "Dataset generation started with PID $!"
+      args:
+        executable: /bin/bash
+      become: yes
+      become_user: ubuntu
+
+    - name: Start monitoring process on first instance
+      shell: |
+        cd /home/ubuntu/own-dataset
+        nohup python3 monitor.py {{ output_dir }} {{ dataset_count }} > /home/ubuntu/monitor.log 2>&1 &
+      args:
+        executable: /bin/bash
+      become: yes
+      become_user: ubuntu
+      when: inventory_hostname == groups['spot_instances'][0]
