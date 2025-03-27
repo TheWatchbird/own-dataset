@@ -408,7 +408,7 @@ async function generateDataset() {
             await generateNewViews();
             
             // Wait for both scenes to be fully loaded and rendered before capturing
-            showLoading('Waiting for scenes to load completely...');
+            showLoading('Waiting for scene load...');
             
             // Create a promise that resolves when both viewers are ready
             await Promise.all([
@@ -416,78 +416,15 @@ async function generateDataset() {
                 waitForSceneToLoad(viewer2)
             ]);
             
-            // Additional render cycles to ensure everything is displayed
+            // Set balanced quality settings for faster rendering
+            viewer1.scene.globe.maximumScreenSpaceError = 2.0;
+            viewer2.scene.globe.maximumScreenSpaceError = 2.0;
+            viewer1.scene.globe.preloadSiblings = false;
+            viewer2.scene.globe.preloadSiblings = false;
+            
+            // Force single render pass
             viewer1.scene.render();
             viewer2.scene.render();
-            
-            // Force higher detail level imagery for better screenshots
-            viewer1.scene.globe.maximumScreenSpaceError = 0.5; // Very high detail (lower value = more detail)
-            viewer2.scene.globe.maximumScreenSpaceError = 0.5;
-            
-            // Force imagery to load at highest available resolution
-            viewer1.scene.globe.preloadSiblings = true;
-            viewer2.scene.globe.preloadSiblings = true;
-            
-            // Optimized image quality enhancement with a timeout
-            await new Promise(resolve => {
-                // Show feedback about what's happening
-                showLoading('Enhancing image quality...');
-                
-                // Set higher quality imagery with slightly reduced demands
-                viewer1.scene.globe.maximumScreenSpaceError = 0.8; // Good balance between quality and speed
-                viewer2.scene.globe.maximumScreenSpaceError = 0.8;
-                
-                // Force imagery to load at highest available resolution
-                viewer1.scene.globe.preloadSiblings = true;
-                viewer2.scene.globe.preloadSiblings = true;
-                
-                // Initial render to trigger loading
-                viewer1.scene.render();
-                viewer2.scene.render();
-                
-                // Set a maximum timeout to prevent hanging
-                const timeoutId = setTimeout(() => {
-                    console.log("Image quality enhancement timeout reached, continuing anyway");
-                    if (animationFrameId) {
-                        cancelAnimationFrame(animationFrameId);
-                    }
-                    resolve();
-                }, 3000); // 3 second max wait
-                
-                // Counter to track number of frames where tilesLoaded is true
-                // We want to make sure tiles stay loaded for multiple frames
-                let stableFrameCount = 0;
-                const requiredStableFrames = 5; // Reduced from 10 to 5
-                
-                // To avoid recursion, we'll use requestAnimationFrame instead of directly calling render
-                let animationFrameId = null;
-                
-                // Function to check tiles loaded status
-                const checkTilesLoaded = () => {
-                    if (viewer1.scene.globe.tilesLoaded && viewer2.scene.globe.tilesLoaded) {
-                        stableFrameCount++;
-                        showLoading(`Enhancing image quality (${stableFrameCount}/${requiredStableFrames})`);
-                        
-                        if (stableFrameCount >= requiredStableFrames) {
-                            // Resolve the promise
-                            clearTimeout(timeoutId);
-                            resolve();
-                            return;
-                        }
-                    } else {
-                        // Reset counter if tiles aren't loaded
-                        stableFrameCount = 0;
-                    }
-                    
-                    // Continue checking in the next frame
-                    animationFrameId = requestAnimationFrame(checkTilesLoaded);
-                };
-                
-                // Start the checking process
-                animationFrameId = requestAnimationFrame(checkTilesLoaded);
-            });
-            
-            hideLoading();
             
             // Capture screenshots
             showLoading('Capturing screenshots...');
@@ -680,61 +617,23 @@ async function generateDataset() {
  */
 function waitForSceneToLoad(viewer) {
     return new Promise(resolve => {
-        if (!viewer || !viewer.scene) {
-            resolve(); // No viewer, resolve immediately
+        if (!viewer?.scene?.globe) {
+            resolve();
             return;
         }
-        
-        const scene = viewer.scene;
-        const globe = scene.globe;
-        
-        // Force a higher detail level for better imagery quality
-        if (globe) {
-            globe.maximumScreenSpaceError = 1.0; // Lower value = higher detail
-        }
 
-        // If scene is already loaded, resolve immediately
+        const globe = viewer.scene.globe;
         if (globe.tilesLoaded) {
             resolve();
             return;
         }
-        
-        // Track if we've resolved yet
-        let hasResolved = false;
-        let animationFrameId = null;
-        
-        // Use requestAnimationFrame to check tile loading status
-        // This avoids potential recursion issues with scene.render()
-        const checkTilesLoaded = () => {
-            // If already resolved, stop checking
-            if (hasResolved) return;
-            
-            // Check if tiles are loaded
+
+        const listener = globe.tileLoadProgressEvent.addEventListener(() => {
             if (globe.tilesLoaded) {
-                hasResolved = true;
-                cancelAnimationFrame(animationFrameId);
+                globe.tileLoadProgressEvent.removeEventListener(listener);
                 resolve();
-                return;
             }
-            
-            // Continue checking in next animation frame
-            animationFrameId = requestAnimationFrame(checkTilesLoaded);
-        };
-        
-        // Start the checking process
-        animationFrameId = requestAnimationFrame(checkTilesLoaded);
-        
-        // Also listen to the tileLoadProgressEvent as a backup
-        if (globe.tileLoadProgressEvent) {
-            const removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
-                if (!hasResolved && globe.tilesLoaded) {
-                    hasResolved = true;
-                    cancelAnimationFrame(animationFrameId);
-                    removeListener();
-                    resolve();
-                }
-            });
-        }
+        });
     });
 }
 
