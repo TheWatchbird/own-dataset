@@ -19,7 +19,8 @@ import {
  *   heightRange: [50, 500], // meters above ground
  *   distanceRange: [100, 1000], // meters
  *   minAngleDiff: Math.PI / 6, // 30 degrees
- *   maxAngleDiff: Math.PI * 2 // 360 degrees
+ *   maxAngleDiff: Math.PI * 2, // 360 degrees
+ *   fovRange: [55, 75] // Degrees for vertical FOV
  * }
  * MATCH_CRITERIA = { minMatchPoints: 1 }
  */
@@ -350,16 +351,30 @@ function generateCameraPositions(location) {
         angleDiff: Math.round(angleDiff * 180 / Math.PI)
     });
 
+    // Add FOV validation
+    const fovRange = DRONE_PARAMS.fovRange || [55, 75]; // Fallback range
+    const fov1 = Cesium.Math.toRadians(
+        (fovRange[0] || 55) + 
+        Math.random() * ((fovRange[1] || 75) - (fovRange[0] || 55))
+    );
+    
+    const fov2 = Cesium.Math.toRadians(
+        (fovRange[0] || 55) + 
+        Math.random() * ((fovRange[1] || 75) - (fovRange[0] || 55))
+    );
+
     return {
         virtualObject,
         virtualObjectPoints,
         camera1: {
             position: camera1Position,
-            orientation: camera1Direction
+            orientation: camera1Direction,
+            fov: fov1
         },
         camera2: {
             position: camera2Position,
-            orientation: camera2Direction
+            orientation: camera2Direction,
+            fov: fov2
         }
     };
 }
@@ -866,6 +881,10 @@ async function setupCameraViews(viewer1, viewer2, location) {
         orientation: sceneSetup.camera2.orientation
     });
     
+    // Set FOV after positioning cameras
+    viewer1.camera.frustum.fov = sceneSetup.camera1.fov;
+    viewer2.camera.frustum.fov = sceneSetup.camera2.fov;
+    
     // Make the virtual object visible but not centered
     // Use viewer.zoomTo with offset to ensure it's in the viewport but not in the center
     await Promise.all([
@@ -1085,7 +1104,9 @@ async function setupCameraViews(viewer1, viewer2, location) {
             },
             pointCount: matchingPoints.length,
             visiblePoints: visiblePoints,
-            debug: debugInfo
+            debug: debugInfo,
+            fov1: Cesium.Math.toDegrees(sceneSetup.camera1.fov).toFixed(1),
+            fov2: Cesium.Math.toDegrees(sceneSetup.camera2.fov).toFixed(1)
         }
     };
 }

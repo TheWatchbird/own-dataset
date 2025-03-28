@@ -56,11 +56,12 @@ const GLOBAL_REGIONS = [
 
 // Drone camera parameters
 const DRONE_PARAMS = {
-    heightRange: [100, 300],    // Drone height range (m)
-    distanceRange: [100, 400],  // Distance from target (m)
-    pitchRange: [-0.6, -0.2],   // Looking down angle (radians, about -35 to -11 degrees)
+    heightRange: [30, 300],    // Drone height range (m)
+    distanceRange: [10, 600],  // Distance from target (m)
+    pitchRange: [-0.8, -0.2],   // Looking down angle (radians, about -35 to -11 degrees)
     minAngleDiff: Math.PI / 6,  // Minimum angle difference between cameras (30 degrees)
-    maxAngleDiff: Math.PI * 2/3 // Maximum angle difference (120 degrees)
+    maxAngleDiff: Math.PI * 2/3, // Maximum angle difference (120 degrees)
+    fovRange: [40, 120], // Valid FOV range in degrees
 };
 
 // Match validation parameters
