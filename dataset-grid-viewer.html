@@ -333,6 +333,55 @@
             border-radius: var(--border-radius);
             margin-top: 30px;
         }
+
+        .image-item.blurry {
+            position: relative;
+            border: 2px solid var(--danger-color);
+        }
+        
+        .image-item.blurry::after {
+            content: "BLURRY";
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background: var(--danger-color);
+            color: white;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .image-item.invalid {
+            border: 2px solid #ffd700;
+        }
+
+        .image-item.invalid::after {
+            content: "INVALID";
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background: #ffd700;
+            color: black;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        #blur-status {
+            margin-top: 10px;
+            padding: 5px;
+            background: rgba(0,0,0,0.05);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        #blur-status div {
+            display: inline-block;
+            margin-right: 15px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -340,6 +389,7 @@
         <h1>Dataset Grid Viewer</h1>
         <div class="controls">
             <button id="select-folder" class="success">Select Dataset Folder</button>
+            <button id="detect-blurry" class="danger" disabled>Detect Blurry Images</button>
             <button id="delete-all" class="danger" disabled>Delete Marked Images</button>
         </div>
     </header>
@@ -368,15 +418,16 @@
             <div class="stat-value" id="deleted-count">0</div>
             <div class="stat-label">Marked for Deletion</div>
         </div>
+        <div class="stat-item">
+            <div class="stat-value" id="invalid-count">0</div>
+            <div class="stat-label">Invalid Pairs</div>
+        </div>
     </div>
 
     <!-- Grid container -->
     <div id="image-grid" class="image-grid">
         <div class="loader" id="loader"></div>
     </div>
-
-    <!-- Load more button -->
-    <button id="load-more" class="load-more" style="display: none;">Load More</button>
 
     <!-- Fullscreen image modal -->
     <div class="modal" id="image-modal">
@@ -397,17 +448,24 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import { detectBlurryImage } from './js/utils.js';
+        
+        // Add this for troubleshooting - verify import worked
+        console.log('Utils imported, blur detection available:', !!detectBlurryImage);
+
         // State management
         const state = {
             folderHandle: null,         // Directory handle
             dataPairs: [],              // All dataset pairs
             loadedPairs: [],            // Currently loaded pairs
             deletedPairs: new Set(),    // Set of pairs marked for deletion
-            batchSize: 30,              // How many images to load at once
+            invalidPairs: new Set(),    // Pairs with missing files
+            batchSize: 15000,            // Increased from 30 to load all images
             currentBatch: 0,            // Current batch index
             loading: false,             // Loading state flag
-            modalPairIndex: -1          // Currently displayed in the modal
+            modalPairIndex: -1,         // Currently displayed in the modal
+            blurredPairs: new Set(),     // Set of blurry pairs
         };
 
         // DOM elements
@@ -432,7 +490,8 @@
             dialog: document.getElementById('dialog'),
             dialogMessage: document.getElementById('dialog-message'),
             dialogCancel: document.getElementById('dialog-cancel'),
-            dialogConfirm: document.getElementById('dialog-confirm')
+            dialogConfirm: document.getElementById('dialog-confirm'),
+            detectBlurry: document.getElementById('detect-blurry'),
         };
 
         // Initialize the app
@@ -451,12 +510,57 @@
             loadDeletedPairsFromStorage();
         }
 
+        // Reusable function to sort grid items
+        function sortGridItems() {
+            const grid = elements.imageGrid;
+            // Ensure loader isn't sorted if present
+            const items = Array.from(grid.querySelectorAll('.image-item'));
+            const loader = grid.querySelector('.loader');
+
+            items.sort((a, b) => {
+                const aName = a.dataset.name;
+                const bName = b.dataset.name;
+
+                // --- Add checks for missing names ---
+                if (!aName || !bName) {
+                    // Handle cases where name might be missing, perhaps put them last
+                    return !aName ? 1 : !bName ? -1 : 0; 
+                }
+                // --- End checks ---
+
+                const aInvalid = state.invalidPairs.has(aName);
+                const bInvalid = state.invalidPairs.has(bName);
+                // Use deletedPairs status for sorting blurry ones marked for deletion
+                const aMarked = state.deletedPairs.has(aName);
+                const bMarked = b.deletedPairs.has(bName);
+                const aBlurry = state.blurredPairs.has(aName);
+                const bBlurry = state.blurredPairs.has(bName);
+
+                // Sort order: Invalid > Blurry (and Marked) > Others
+                // Put Invalid first
+                if (aInvalid !== bInvalid) return bInvalid - aInvalid;
+                // Then Blurry & Marked
+                if ((aBlurry && aMarked) !== (bBlurry && bMarked)) return (bBlurry && bMarked) - (aBlurry && aMarked);
+                // Then sort by original index otherwise
+                const indexA = parseInt(a.dataset.index) || 0;
+                const indexB = parseInt(b.dataset.index) || 0;
+                return indexA - indexB;
+            });
+
+            // Re-append sorted items
+            items.forEach(item => grid.appendChild(item));
+            // Ensure loader is always last if it exists
+            if (loader) {
+                grid.appendChild(loader);
+            }
+        }
+
         // Set up event listeners
         function setupEventListeners() {
             // Main controls
             elements.selectFolder.addEventListener('click', handleSelectFolder);
             elements.deleteAll.addEventListener('click', handleDeleteMarkedPairs);
-            elements.loadMore.addEventListener('click', loadMorePairs);
+            elements.detectBlurry.addEventListener('click', detectBlurryImages);
 
             // Modal
             elements.modalClose.addEventListener('click', closeModal);
@@ -468,18 +572,27 @@
 
             // Dialog
             elements.dialogCancel.addEventListener('click', closeDialog);
+
+            elements.detectBlurry.disabled = false;
+            updateStatus(`Loaded all ${state.loadedPairs.length} pairs`, 'success');
+
+            // Sort grid after loading all pairs
+            sortGridItems();
         }
 
         // Handle folder selection
         async function handleSelectFolder() {
             try {
-                // Reset state
+                // Reset state first
                 resetState();
+                
+                // Create new loader and add to DOM
                 elements.imageGrid.innerHTML = '<div class="loader" id="loader"></div>';
                 elements.loader = document.getElementById('loader');
-                
-                updateStatus('Selecting folder...', 'info');
+                elements.loader.style.display = 'block';
 
+                updateStatus('Selecting folder...', 'info');
+                
                 // Request directory access
                 state.folderHandle = await window.showDirectoryPicker({
                     mode: 'readwrite',
@@ -491,20 +604,17 @@
                 // Scan directory
                 await scanDirectory();
                 
-                // Load first batch of images
-                if (state.dataPairs.length > 0) {
-                    loadPairsBatch();
-                } else {
-                    elements.imageGrid.innerHTML = '<div class="no-images">No valid image pairs found in the selected folder.</div>';
-                    updateStatus('No valid image pairs found.', 'error');
-                }
+                // Load all pairs
+                await loadAllPairs();
                 
                 // Update UI
                 updateStats();
             } catch (error) {
                 console.error('Error selecting folder:', error);
                 updateStatus(`Error: ${error.message}`, 'error');
-                elements.loader.style.display = 'none';
+                if (elements.loader) {
+                    elements.loader.style.display = 'none';
+                }
             }
         }
 
@@ -521,8 +631,8 @@
             // Update UI stats
             updateStats();
             
-            // Hide load more button
-            elements.loadMore.style.display = 'none';
+            // Remove loader reference
+            elements.loader = null;
         }
 
         // Scan directory for image pairs
@@ -587,62 +697,52 @@
             }
         }
 
-        // Load a batch of pairs into the grid
-        async function loadPairsBatch() {
-            if (state.loading || state.currentBatch * state.batchSize >= state.dataPairs.length) {
-                return;
-            }
+        // Load all pairs
+        async function loadAllPairs() {
+            if (state.loading) return;
             
             state.loading = true;
             elements.loader.style.display = 'block';
-            
-            const start = state.currentBatch * state.batchSize;
-            const end = Math.min(start + state.batchSize, state.dataPairs.length);
-            
-            updateStatus(`Loading pairs ${start + 1} to ${end} of ${state.dataPairs.length}...`, 'info');
-            
-            const batch = state.dataPairs.slice(start, end);
-            
-            // Load each pair's images
-            for (const pair of batch) {
-                try {
-                    await loadPairImages(pair);
-                    
-                    // Add to loaded pairs
-                    state.loadedPairs.push(pair);
-                    
-                    // Add to the grid
-                    addPairToGrid(pair);
-                    
-                    // Update the stats
-                    updateStats();
-                } catch (error) {
-                    console.warn(`Error loading pair ${pair.name}:`, error);
-                }
-            }
-            
-            // Hide loader
-            elements.loader.style.display = 'none';
-            
-            // Show load more button if there are more pairs
-            if (end < state.dataPairs.length) {
-                elements.loadMore.style.display = 'block';
-            } else {
-                elements.loadMore.style.display = 'none';
-            }
-            
-            // Increment batch counter
-            state.currentBatch++;
-            state.loading = false;
-            
-            updateStatus(`Loaded ${state.loadedPairs.length} of ${state.dataPairs.length} pairs.`, 'success');
-        }
+            showProgress(0, state.dataPairs.length, 'Loading images...');
 
-        // Load more button handler
-        function loadMorePairs() {
-            if (!state.loading) {
-                loadPairsBatch();
+            try {
+                const batch = state.dataPairs;
+                let errorCount = 0;
+                
+                for (let i = 0; i < batch.length; i++) {
+                    try {
+                        const pair = batch[i];
+                        await loadPairImages(pair);
+                        state.loadedPairs.push(pair);
+                        addPairToGrid(pair);
+                        
+                        // Update progress every 50 images
+                        if (i % 50 === 0) {
+                            updateProgress(i + 1, batch.length, 
+                                `Loaded ${i + 1}/${batch.length} (${Math.round((i + 1)/batch.length * 100)}%)`);
+                            await new Promise(r => setTimeout(r, 0)); // Allow UI updates
+                        }
+                    } catch (error) {
+                        errorCount++;
+                        console.warn(`Skipping invalid pair: ${batch[i].name}`);
+                        updateStatus(`Loaded ${i + 1}/${batch.length} (${errorCount} errors)`, 'warning');
+                    }
+                }
+                
+                if (elements.loadMore) {
+                    elements.loadMore.style.display = 'none';
+                }
+                updateStatus(`Loaded all ${state.loadedPairs.length} pairs`, 'success');
+                elements.detectBlurry.disabled = state.loadedPairs.length === 0;
+
+                // Sort grid after loading all pairs
+                sortGridItems();
+            } catch (error) {
+                console.error('Loading error:', error);
             }
+            
+            hideProgress();
+            state.loading = false;
         }
 
         // Load images for a pair
@@ -650,13 +750,25 @@
             if (pair.loaded) return;
             
             try {
-                // First try to get the debug image (combined view)
+                // Check for metadata.json first
+                try {
+                    const metaFile = await pair.folder.getFileHandle('metadata.json');
+                    pair.meta = await metaFile.getFile();
+                } catch (e) {
+                    state.invalidPairs.add(pair.name);
+                    state.deletedPairs.add(pair.name);
+                    throw new Error('Missing metadata.json');
+                }
+
+                // Check image files
+                let hasValidImages = false;
                 try {
                     const debugFile = await pair.folder.getFileHandle('debug.jpg');
                     pair.images.debug = await debugFile.getFile();
                     pair.objectUrls.debug = URL.createObjectURL(pair.images.debug);
+                    hasValidImages = true;
                 } catch (e) {
-                    // If no debug image, we'll load view1 and view2 separately
+                    // Check for view images if debug is missing
                     try {
                         const view1File = await pair.folder.getFileHandle('view1.jpg');
                         pair.images.view1 = await view1File.getFile();
@@ -665,15 +777,24 @@
                         const view2File = await pair.folder.getFileHandle('view2.jpg');
                         pair.images.view2 = await view2File.getFile();
                         pair.objectUrls.view2 = URL.createObjectURL(pair.images.view2);
+                        hasValidImages = true;
                     } catch (innerError) {
-                        throw new Error(`Could not load view images: ${innerError.message}`);
+                        // No valid images found
                     }
+                }
+
+                if (!hasValidImages) {
+                    state.invalidPairs.add(pair.name);
+                    state.deletedPairs.add(pair.name);
+                    throw new Error('Missing both debug and view images');
                 }
                 
                 pair.loaded = true;
                 return pair;
             } catch (error) {
-                console.error(`Error loading images for pair ${pair.name}:`, error);
+                console.error(`Error loading pair ${pair.name}:`, error);
+                state.invalidPairs.add(pair.name);
+                state.deletedPairs.add(pair.name);
                 throw error;
             }
         }
@@ -681,10 +802,11 @@
         // Add a pair to the image grid
         function addPairToGrid(pair) {
             const isDeleted = state.deletedPairs.has(pair.name);
+            const isInvalid = state.invalidPairs.has(pair.name);
             const pairIndex = state.loadedPairs.length - 1;
             
             const item = document.createElement('div');
-            item.className = `image-item${isDeleted ? ' deleted' : ''}`;
+            item.className = `image-item${isInvalid ? ' invalid' : ''}${isDeleted ? ' deleted' : ''}`;
             item.dataset.name = pair.name;
             item.dataset.index = pairIndex;
             
@@ -719,12 +841,21 @@
             } else {
                 elements.imageGrid.appendChild(item);
             }
+            
+            const isBlurry = state.blurredPairs.has(pair.name);
+            if (isBlurry) {
+                item.classList.add('blurry');
+            }
         }
 
         // Toggle delete status for a pair
         function toggleDeletePair(pairName) {
             if (state.deletedPairs.has(pairName)) {
                 state.deletedPairs.delete(pairName);
+                // Also remove from blurry set if restoring
+                if (state.blurredPairs.has(pairName)) {
+                    state.blurredPairs.delete(pairName);
+                }
             } else {
                 state.deletedPairs.add(pairName);
             }
@@ -919,16 +1050,19 @@
         }
 
         // Show progress UI
-        function showProgress(current, total) {
+        function showProgress(current, total, message = null) {
+            if (!elements.progressContainer) return; // Add null check
             elements.progressContainer.style.display = 'block';
-            updateProgress(current, total);
+            updateProgress(current, total, message);
         }
 
         // Update progress bar
         function updateProgress(current, total, message = null) {
-            const percent = Math.round((current / total) * 100);
+            if (!elements.progressBar || !elements.progressText) return; // Add null checks
+
+            const percent = total > 0 ? Math.round((current / total) * 100) : 0;
             elements.progressBar.style.width = `${percent}%`;
-            
+
             if (message) {
                 elements.progressText.textContent = message;
             }
@@ -936,6 +1070,7 @@
 
         // Hide progress UI
         function hideProgress() {
+            if (!elements.progressContainer) return; // Add null check
             elements.progressContainer.style.display = 'none';
         }
 
@@ -944,9 +1079,37 @@
             elements.totalCount.textContent = state.dataPairs.length;
             elements.loadedCount.textContent = state.loadedPairs.length;
             elements.deletedCount.textContent = state.deletedPairs.size;
+            document.getElementById('invalid-count').textContent = state.invalidPairs.size;
             
             // Enable/disable delete button
             elements.deleteAll.disabled = state.deletedPairs.size === 0;
+
+            // Create or find the dedicated status element
+            let blurStatus = document.getElementById('blur-status');
+            if (!blurStatus) {
+                blurStatus = document.createElement('div');
+                blurStatus.id = 'blur-status';
+                // Safely append to progress container
+                if (elements.progressContainer) { 
+                    // Insert it after the progress text if possible
+                    if (elements.progressText?.parentNode === elements.progressContainer) {
+                        elements.progressContainer.insertBefore(blurStatus, elements.progressText.nextSibling);
+                    } else {
+                        elements.progressContainer.appendChild(blurStatus); // Fallback append
+                    }
+                } else {
+                    console.warn('Progress container not found, cannot display blur status.');
+                }
+            }
+            
+            // Immediately show initial status if blurStatus exists
+            if (blurStatus) {
+                blurStatus.innerHTML = `
+                    <div>Processed: 0/${state.loadedPairs.length}</div>
+                    <div>Blurry found: 0</div>
+                    <div>Starting analysis...</div>
+                `;
+            }
         }
 
         // Update status message
@@ -985,6 +1148,151 @@
                 }
             } catch (error) {
                 console.warn('Error loading deleted pairs from localStorage:', error);
+            }
+        }
+
+        // Detect blurry images
+        async function detectBlurryImages() {
+            console.log('Starting blur detection...');
+            
+            if (!state.loadedPairs.length) {
+                updateStatus('Load images first before detecting blur', 'warning');
+                return;
+            }
+
+            try {
+                elements.detectBlurry.disabled = true;
+                showProgress(0, state.loadedPairs.length, '🚦 Starting blur detection...');
+                
+                // Initial feedback
+                updateStatus('Starting blur detection - this may take several minutes...', 'info');
+                
+                let blurryCount = 0;
+                let currentProcessed = 0;
+                const startTime = Date.now();
+                
+                // Create or find the dedicated status element
+                let blurStatus = document.getElementById('blur-status');
+                if (!blurStatus) {
+                    blurStatus = document.createElement('div');
+                    blurStatus.id = 'blur-status';
+                    // Safely append to progress container
+                    if (elements.progressContainer) { 
+                        // Insert it after the progress text if possible
+                        if (elements.progressText?.parentNode === elements.progressContainer) {
+                            elements.progressContainer.insertBefore(blurStatus, elements.progressText.nextSibling);
+                        } else {
+                            elements.progressContainer.appendChild(blurStatus); // Fallback append
+                        }
+                    } else {
+                        console.warn('Progress container not found, cannot display blur status.');
+                    }
+                }
+                
+                // Process in smaller batches to keep UI responsive
+                for (let i = 0; i < state.loadedPairs.length; i++) {
+                    const pair = state.loadedPairs[i];
+                    
+                    try {
+                        // Get the right image URL
+                        const imgUrl = pair.objectUrls.debug || pair.objectUrls.view1;
+                        if (!imgUrl) {
+                            console.warn('No image URL found for pair:', pair.name);
+                            continue;
+                        }
+                        
+                        // Call blur detection with timeout protection
+                        let isClear = true;
+                        try {
+                            isClear = await Promise.race([
+                                detectBlurryImage(imgUrl),
+                                new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('Blur detection timeout')), 5000)
+                                )
+                            ]);
+                        } catch (detectionError) {
+                            console.warn('Blur detection error for pair:', pair.name, detectionError);
+                            // Continue with next image on error
+                            continue;
+                        }
+                        
+                        if (!isClear) {
+                            // Mark for deletion and add to blurry set
+                            state.blurredPairs.add(pair.name);
+                            state.deletedPairs.add(pair.name);
+                            blurryCount++;
+                            
+                            // Immediate UI updates
+                            const item = elements.imageGrid.querySelector(`[data-name="${pair.name}"]`);
+                            if (item) {
+                                item.classList.add('blurry', 'deleted');
+                                const deleteButton = item.querySelector('.delete-button');
+                                if (deleteButton) {
+                                    deleteButton.textContent = 'Restore';
+                                    if (deleteButton.classList.contains('danger')) {
+                                        deleteButton.classList.remove('danger');
+                                        deleteButton.classList.add('success');
+                                    }
+                                }
+                            }
+                        }
+                    } catch (pairError) {
+                        console.error('Error processing pair:', pair.name, pairError);
+                    }
+
+                    currentProcessed++;
+                    
+                    // Update progress every 5 images (more frequent feedback)
+                    if (currentProcessed % 5 === 0) {
+                        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                        const rate = elapsed > 0 ? Math.floor(currentProcessed / elapsed) : 0;
+                        const remaining = rate > 0 ? Math.floor((state.loadedPairs.length - currentProcessed) / rate) : '?';
+                        
+                        // Update blur status only if it exists
+                        if (blurStatus) { 
+                            blurStatus.innerHTML = `
+                                <div>Processed: ${currentProcessed}/${state.loadedPairs.length}</div>
+                                <div>Blurry found: ${blurryCount}</div>
+                                <div>Elapsed: ${elapsed}s</div>
+                                <div>Remaining: ~${remaining}s</div>
+                                <div>Speed: ${rate} img/s</div>
+                            `;
+                        }
+                        
+                        updateProgress(currentProcessed, state.loadedPairs.length);
+                        await new Promise(r => setTimeout(r, 0)); // Allow UI updates
+                    }
+                }
+
+                // Final cleanup - hideProgress now handles removing blurStatus
+                hideProgress();
+                
+                // Visual and audio feedback
+                elements.status.innerHTML = `
+                    <span style="color: var(--danger-color);">✔️ Blur detection complete!</span>
+                    <br>
+                    Total blurry images: ${blurryCount}
+                `;
+                
+                // Sort grid after detection completes
+                sortGridItems();
+                
+                // Audio cue when complete
+                try {
+                    new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU').play();
+                } catch (audioError) {
+                    console.warn('Could not play completion sound', audioError);
+                }
+                
+                // Update stats and save state
+                updateStats();
+                saveDeletedPairsToStorage();
+                
+            } catch (error) {
+                console.error('Blur detection failed:', error);
+                updateStatus(`Blur detection error: ${error.message}`, 'error');
+            } finally {
+                elements.detectBlurry.disabled = false;
             }
         }
 

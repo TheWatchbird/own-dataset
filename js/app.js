@@ -201,19 +201,32 @@ async function generateNewViews() {
         // Get location from queue or generate a new one
         currentLocation = await getNextLocation();
         
-        // Location selected
-        
         // Create fresh viewers
         createViewers();
         
+        // Wait for initial scene load to ensure map data is available
+        showLoading('Loading map data...');
+        const [view1Result, view2Result] = await Promise.all([
+            waitForSceneToLoad(viewer1),
+            waitForSceneToLoad(viewer2)
+        ]);
+        
+        // Check if map data is available
+        if (!view1Result.loaded || !view2Result.loaded) {
+            throw new Error("Map data not available for this location. Please try again.");
+        }
+        
+        // If retries were needed, log it
+        if (view1Result.retried > 0 || view2Result.retried > 0) {
+            console.log(`Initial scene load required retries (view1: ${view1Result.retried}, view2: ${view2Result.retried})`);
+        }
+        
         // Generate scene with cameras and virtual object
+        showLoading('Positioning cameras...');
         const result = await setupCameraViews(viewer1, viewer2, currentLocation);
         
         // Store matching points (projections of the virtual object)
         matchingPoints = result.matchingPoints;
-        
-        // Log the results
-        // Virtual object projected to both views
         
         // Update stats and visualization
         updateStats(result.stats);
@@ -411,10 +424,30 @@ async function generateDataset() {
             showLoading('Waiting for scene load...');
             
             // Create a promise that resolves when both viewers are ready
-            await Promise.all([
+            const [view1Result, view2Result] = await Promise.all([
                 waitForSceneToLoad(viewer1),
                 waitForSceneToLoad(viewer2)
             ]);
+            
+            // Check if either scene failed to load properly
+            if (!view1Result.loaded || !view2Result.loaded) {
+                console.warn(`Map data not fully available for pair ${i+1}/${count} after retries. Skipping...`);
+                showError('Skipping pair due to unavailable map data', 'warning');
+                
+                // Decrement counter to retry with a new scene
+                i--;
+                
+                // Allow some time for garbage collection before trying a new location
+                await new Promise(resolve => setTimeout(resolve, 200));
+                
+                // Skip to next iteration with a new location
+                continue;
+            }
+            
+            // If we had to retry but succeeded, log it
+            if (view1Result.retried > 0 || view2Result.retried > 0) {
+                console.log(`Successfully loaded pair ${i+1} after retries (view1: ${view1Result.retried}, view2: ${view2Result.retried})`);
+            }
             
             // Set balanced quality settings for faster rendering
             viewer1.scene.globe.maximumScreenSpaceError = 2.0;
@@ -613,27 +646,138 @@ async function generateDataset() {
 /**
  * Wait for a Cesium scene to be fully loaded using proper event-based detection
  * @param {Cesium.Viewer} viewer - The Cesium viewer to check
- * @returns {Promise} - Promise that resolves when the scene is loaded
+ * @param {Number} maxRetries - Maximum number of retries if tiles fail to load
+ * @returns {Promise<{loaded: boolean, retried: number}>} - Promise that resolves when the scene is loaded or max retries reached
  */
-function waitForSceneToLoad(viewer) {
+function waitForSceneToLoad(viewer, maxRetries = 3) {
     return new Promise(resolve => {
         if (!viewer?.scene?.globe) {
-            resolve();
+            resolve({ loaded: false, retried: 0 });
             return;
         }
 
         const globe = viewer.scene.globe;
         if (globe.tilesLoaded) {
-            resolve();
+            resolve({ loaded: true, retried: 0 });
             return;
         }
 
-        const listener = globe.tileLoadProgressEvent.addEventListener(() => {
-            if (globe.tilesLoaded) {
-                globe.tileLoadProgressEvent.removeEventListener(listener);
-                resolve();
+        let retryCount = 0;
+        let currentQuality = globe.maximumScreenSpaceError || 2.0;
+        let hasMapData = true;
+
+        // Function to adjust quality and retry
+        const retryWithDifferentQuality = () => {
+            retryCount++;
+            
+            // Increase error tolerance to load faster with lower quality
+            currentQuality = Math.min(currentQuality * 1.5, 8);
+            console.log(`Retry ${retryCount}: Adjusting tile quality (maximumScreenSpaceError: ${currentQuality})`);
+            
+            globe.maximumScreenSpaceError = currentQuality;
+            
+            // Force a new render to kick off tile loading with new quality settings
+            viewer.scene.render();
+            
+            // Start monitoring again
+            startMonitoring();
+        };
+
+        // Track if we've resolved yet
+        let hasResolved = false;
+        let animationFrameId = null;
+        let removeListener = null;
+        let timeoutId = null;
+
+        // Cleanup function to prevent memory leaks
+        const cleanup = () => {
+            hasResolved = true;
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
             }
-        });
+            if (removeListener) {
+                removeListener();
+                removeListener = null;
+            }
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+        };
+        
+        // Start monitoring for tile loading
+        const startMonitoring = () => {
+            // Clear any existing timeouts or listeners
+            cleanup();
+            hasResolved = false;
+            
+            // Set a timeout to detect if tiles are not loading at all
+            timeoutId = setTimeout(() => {
+                // Check if we've made any progress loading tiles
+                if (!hasResolved) {
+                    const tileProvider = globe.imageryLayers.get(0)?.imageryProvider;
+                    const tilesAvailability = globe._surface?._tileLoadQueueHigh?.length || 
+                                             globe._surface?._tileLoadQueueMedium?.length ||
+                                             globe._surface?._tileLoadQueueLow?.length;
+                    
+                    // If no tile load activity after timeout, we may have no map data
+                    if (!tilesAvailability && tileProvider && !globe.tilesLoaded) {
+                        hasMapData = false;
+                        console.warn("No tile loading activity detected - map data may not be available");
+                        
+                        if (retryCount < maxRetries) {
+                            retryWithDifferentQuality();
+                        } else {
+                            console.error(`Failed to load tiles after ${maxRetries} retries`);
+                            cleanup();
+                            resolve({ loaded: false, retried: retryCount });
+                        }
+                    }
+                }
+            }, 3000);
+            
+            // Use requestAnimationFrame to check tile loading status
+            const checkTilesLoaded = () => {
+                // If already resolved or viewer destroyed, clean up
+                if (hasResolved || !viewer || !viewer.scene) {
+                    cleanup();
+                    resolve({ loaded: false, retried: retryCount });
+                    return;
+                }
+                
+                // Check if tiles are loaded
+                if (globe.tilesLoaded) {
+                    cleanup();
+                    resolve({ loaded: true, retried: retryCount });
+                    return;
+                }
+                
+                // Continue checking in next animation frame
+                animationFrameId = requestAnimationFrame(checkTilesLoaded);
+            };
+            
+            // Start the checking process
+            animationFrameId = requestAnimationFrame(checkTilesLoaded);
+            
+            // Also listen to the tileLoadProgressEvent as a backup
+            if (globe.tileLoadProgressEvent) {
+                removeListener = globe.tileLoadProgressEvent.addEventListener(() => {
+                    if (!hasResolved) {
+                        if (globe.tilesLoaded) {
+                            cleanup();
+                            resolve({ loaded: true, retried: retryCount });
+                        }
+                    }
+                });
+            }
+            
+            // Force an initial render to kick off tile loading
+            viewer.scene.render();
+        };
+        
+        // Start initial monitoring
+        startMonitoring();
     });
 }
 
