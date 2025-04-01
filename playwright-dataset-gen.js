@@ -4,22 +4,53 @@ const numCPUs = require('os').cpus().length;
 const path = require('path');
 const fs = require('fs').promises;
 
+/**
+ * Dataset Generator Script
+ * 
+ * Usage: node playwright-dataset-gen.js [INSTANCES] [OUTPUT_DIR] [OPTIONS]
+ * 
+ * Arguments:
+ *   INSTANCES     - Number of parallel browser instances (default: 75% of available CPU cores)
+ *   OUTPUT_DIR    - Directory to save the dataset (default: /home/ubuntu/dataset-output)
+ * 
+ * Options:
+ *   --headless    - Run browsers in headless mode (default: non-headless)
+ *   --no-headless - Explicitly run browsers in non-headless mode (default behavior)
+ *   --restart=N   - Set restart interval to N minutes (default: 10 minutes)
+ * 
+ * Example:
+ *   node playwright-dataset-gen.js 4 ./my-dataset --headless --restart=15
+ */
+
 // Set NVIDIA environment variables
 process.env.NVIDIA_VISIBLE_DEVICES = 'all';
 process.env.CUDA_VISIBLE_DEVICES = '0';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
+
+// Parse restart interval if provided
+const restartArgPattern = /--restart=(\d+)/;
+let restartMinutes = 10; // Default 10 minutes
+for (const arg of args) {
+  const match = arg.match(restartArgPattern);
+  if (match && match[1]) {
+    restartMinutes = parseInt(match[1]);
+    break;
+  }
+}
+
 const CONFIG = {
   url: 'https://own-dataset.vercel.app/',
   instances: parseInt(args[0]) || Math.max(Math.floor(numCPUs * 0.75), 1),
-  headless: args.includes('--headless'),
+  headless: args.includes('--headless') ? true : (args.includes('--no-headless') ? false : false), // Default to non-headless
   retryAttempts: 3,
   retryDelay: 5000, // 5 seconds
   outputDir: args[1] || '/home/ubuntu/dataset-output',
   maxRetryDelay: 30000, // 30 seconds
   progressTimeout: 300000, // 5 minutes
-  datasetCount: 1000000 // Set to 1 million pairs
+  datasetCount: 1000000, // Set to 1 million pairs
+  restartInterval: restartMinutes * 60 * 1000 // Convert minutes to milliseconds
 };
 
 async function sleep(ms) {
@@ -81,7 +112,7 @@ async function runBrowser(workerId) {
           '--enable-features=VaapiVideoDecoder',
           '--force-gpu-rasterization',
           // Headless mode configuration
-          '--headless=new',
+          ...(CONFIG.headless ? ['--headless=new'] : []),
           '--disable-dev-shm-usage',
           '--use-gl=angle',
           '--use-angle=default',
@@ -406,6 +437,162 @@ async function runBrowser(workerId) {
         `
       });
 
+      // Setup restart timer function
+      async function setupRestartTimer(page) {
+        console.log(`Worker ${workerId}: Setting up restart timer for ${CONFIG.restartInterval/1000/60} minutes`);
+        return setTimeout(async () => {
+          console.log(`Worker ${workerId}: Restarting generation after ${CONFIG.restartInterval/1000/60} minutes`);
+          try {
+            // Reload the page
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+            
+            // Wait for the page to load
+            await Promise.all([
+              page.waitForLoadState('domcontentloaded', { timeout: 60000 }),
+              page.waitForSelector('#generate-dataset-btn', { timeout: 60000 })
+            ]);
+            
+            // Re-inject the directory path
+            await page.evaluate((dirPath) => {
+              window.__outputDir = dirPath;
+            }, CONFIG.outputDir);
+            
+            // Reapply the showDirectoryPicker override
+            await page.evaluate(() => {
+              // Keep track of current directory path and pending file operations
+              window.__currentDir = window.__outputDir;
+              window.__pendingWrites = new Map();
+              window.__currentFileData = new Map();
+              
+              window.showDirectoryPicker = async () => {
+                return {
+                  kind: 'directory',
+                  name: window.__outputDir,
+                  async *entries() {},
+                  async getDirectoryHandle(name, { create } = {}) {
+                    // Update current directory context when a subdirectory is created
+                    window.__currentDir = `${window.__outputDir}/${name}`;
+                    console.log(`Creating directory: ${window.__currentDir}`);
+                    return this;
+                  },
+                  async getFileHandle(name, { create } = {}) {
+                    // Use the current directory context for file paths
+                    const filePath = `${window.__currentDir}/${name}`;
+                    console.log(`Creating file: ${filePath}`);
+                    
+                    // Clear any existing data for this file
+                    window.__currentFileData.delete(filePath);
+                    
+                    return {
+                      kind: 'file',
+                      name,
+                      filePath,
+                      async createWritable() {
+                        return {
+                          async write(data) {
+                            // Keep a direct reference to the raw data
+                            if (!window.__currentFileData.has(filePath)) {
+                              window.__currentFileData.set(filePath, []);
+                            }
+                            
+                            const chunks = window.__currentFileData.get(filePath);
+                            const fileExt = filePath.toLowerCase().split('.').pop();
+                            
+                            console.log(`Writing to ${filePath}, data type: ${typeof data}, constructor: ${data?.constructor?.name}`);
+                            
+                            if (data instanceof Blob) {
+                              console.log(`Processing Blob (${data.size} bytes) for ${filePath}`);
+                              if (fileExt === 'jpg' || fileExt === 'jpeg' || fileExt === 'png') {
+                                // For images, keep binary handling
+                                const arrayBuffer = await data.arrayBuffer();
+                                const uint8Array = new Uint8Array(arrayBuffer);
+                                chunks.push(Array.from(uint8Array));
+                                console.log(`Processed Blob into array of ${uint8Array.length} bytes`);
+                              } else {
+                                // For text files, convert Blob to text
+                                const text = await data.text();
+                                chunks.push(text);
+                                console.log(`Processed Blob as text of length ${text.length}`);
+                              }
+                            } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+                              if (fileExt === 'jpg' || fileExt === 'jpeg' || fileExt === 'png') {
+                                // For images, keep binary handling
+                                const uint8Array = data instanceof Uint8Array ? data : new Uint8Array(data.buffer || data);
+                                chunks.push(Array.from(uint8Array));
+                                console.log(`Processed binary data into array of ${uint8Array.length} bytes`);
+                              } else {
+                                // For text files, convert to string
+                                const text = new TextDecoder().decode(data);
+                                chunks.push(text);
+                                console.log(`Processed binary data as text of length ${text.length}`);
+                              }
+                            } else if (typeof data === 'string') {
+                              chunks.push(data);
+                              console.log(`Added string data of length ${data.length}`);
+                            } else {
+                              console.log(`Added ${typeof data} to ${filePath}`);
+                              chunks.push(String(data));
+                            }
+                          },
+                          async close() {
+                            console.log(`Closing file: ${filePath}`);
+                            const fileData = window.__currentFileData.get(filePath) || [];
+                            console.log(`Preparing to save ${filePath} with ${fileData.length} chunks`);
+                            
+                            // Send the raw data chunks to avoid any conversion issues
+                            window.dispatchEvent(new CustomEvent('saveFile', { 
+                              detail: { 
+                                name: filePath,
+                                data: fileData
+                              }
+                            }));
+                          }
+                        };
+                      }
+                    };
+                  }
+                };
+              };
+            });
+            
+            // Reapply the saveFile event handler
+            await page.evaluate(() => {
+              // Listen for saveFile events from the FileSystemWritableFileStream mock
+              window.addEventListener('saveFile', async (e) => {
+                const { name, data } = e.detail;
+                
+                console.log(`Save event triggered for: ${name}`);
+                console.log(`Data type: ${Array.isArray(data) ? 'Array' : typeof data}`);
+                console.log(`Data length: ${data?.length || 0}`);
+                
+                try {
+                  // Send the file data to the Node.js context
+                  await window.saveFile(name, data);
+                  console.log(`Successfully passed data for ${name} to Node.js context`);
+                } catch (error) {
+                  console.error(`Error passing data to Node.js: ${error.message}`);
+                }
+              });
+            });
+            
+            // Set dataset count and start generation again
+            await page.evaluate((count) => {
+              document.getElementById('dataset-count').value = count;
+            }, CONFIG.datasetCount);
+            
+            await page.getByText('Generate Dataset').click();
+            console.log(`Worker ${workerId}: Generation restarted successfully`);
+            
+            // Setup next restart
+            setupRestartTimer(page);
+          } catch (error) {
+            console.error(`Worker ${workerId}: Error during restart: ${error.message}`);
+            // Try to recover by attempting restart again after a delay
+            setTimeout(() => setupRestartTimer(page), 30000);
+          }
+        }, CONFIG.restartInterval);
+      }
+
       console.log(`Worker ${workerId}: Starting generation`);
       await page.evaluate((count) => {
         document.getElementById('dataset-count').value = count;
@@ -433,6 +620,9 @@ async function runBrowser(workerId) {
         }
       });
 
+      // Set up the automatic restart timer
+      const restartTimer = await setupRestartTimer(page);
+
       // Let it run indefinitely - can be stopped manually
       console.log(`Worker ${workerId}: Generation started - running indefinitely until stopped...`);
       
@@ -440,6 +630,7 @@ async function runBrowser(workerId) {
       await new Promise(() => {}); // Never resolves, keeps running until process is killed
 
       // These lines will never be reached due to infinite promise above
+      clearTimeout(restartTimer);
       console.log(`Worker ${workerId}: Generation completed successfully`);
       await context.close();
       return true;
@@ -470,6 +661,7 @@ Available CPU cores: ${numCPUs}
 Running instances: ${CONFIG.instances}
 Headless mode: ${CONFIG.headless}
 Output directory: ${CONFIG.outputDir}
+Restart interval: ${CONFIG.restartInterval/1000/60} minutes
 =====================
 `);
 
