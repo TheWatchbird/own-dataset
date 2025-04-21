@@ -3,7 +3,7 @@
  */
 
 // Cesium Ion token for accessing the Cesium platform and datasets
-const CESIUM_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIzZGQ5OWViMi1kMzBjLTQyZjAtYTdhNC1jYzZiZWJlMDFjZWEiLCJpZCI6Mjc4NDA5LCJpYXQiOjE3NDAzNDc1MDd9.m8necNbdghgD5_QEIgAp988bm6OjekOVOLYMpC7P1xw';
+const CESIUM_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4ZjIxYTc1Yy1jYjUyLTQwODMtYmM3MC03Y2ZhZjEzNTliZjEiLCJpZCI6Mjk1OTA3LCJpYXQiOjE3NDUyMzk5MzV9.bhhNzsufa2y1J8sxNjk51pnTVHJDggf7S8eYOLVljIY';
 
 // Global regions with diverse populated areas and good satellite imagery
 const GLOBAL_REGIONS = [
@@ -51,7 +51,7 @@ const GLOBAL_REGIONS = [
     */
     
     // China 
-    { name: "Eastern China", minLat: 25.0, maxLat: 40.0, minLon: 110.0, maxLon: 125.0 }
+    //{ name: "Eastern China", minLat: 25.0, maxLat: 40.0, minLon: 110.0, maxLon: 125.0 }
 ];
 
 // Drone camera parameters
